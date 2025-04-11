@@ -21,7 +21,8 @@ For example, you can create a read-only integration token by giving only "Read c
 
 #### 2. Adding MCP config to your client:
 
- Add the following to your `.cursor/mcp.json` or `claude_desktop_config.json` (MacOS: `~/Library/Application\ Support/Claude/claude_desktop_config.json`)
+##### Using npm:
+Add the following to your `.cursor/mcp.json` or `claude_desktop_config.json` (MacOS: `~/Library/Application\ Support/Claude/claude_desktop_config.json`)
 
 ```javascript
 {
@@ -32,6 +33,33 @@ For example, you can create a read-only integration token by giving only "Read c
       "env": {
         "OPENAPI_MCP_HEADERS": "{\"Authorization\": \"Bearer ntn_****\", \"Notion-Version\": \"2022-06-28\" }"
       }
+    }
+  }
+}
+```
+
+##### Using Docker:
+You can also run the MCP server using Docker. First, build the Docker image:
+
+```bash
+docker-compose build
+```
+
+Then, add the following to your `.cursor/mcp.json` or `claude_desktop_config.json`:
+
+```javascript
+{
+  "mcpServers": {
+    "notionApi": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "OPENAPI_MCP_HEADERS={\"Authorization\": \"Bearer ntn_****\", \"Notion-Version\": \"2022-06-28\"}",
+        "notion-mcp-server-notion-mcp-server"
+      ]
     }
   }
 }
