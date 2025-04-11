@@ -46,7 +46,7 @@ Ensure relevant pages and databases are connected to your integration.
 
 To do this, you'll need to visit that page, and click on the 3 dots, and select "Connect to integration". 
 
-[Adding Integration Token to Notion Connections](docs/images/connections.png)
+![Adding Integration Token to Notion Connections](docs/images/connections.png)
 
 ### Examples
 
