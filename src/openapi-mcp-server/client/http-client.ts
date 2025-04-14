@@ -49,7 +49,6 @@ export class HttpClient {
   }
 
   private async prepareFileUpload(operation: OpenAPIV3.OperationObject, params: Record<string, any>): Promise<FormData | null> {
-    console.error('prepareFileUpload', { operation, params })
     const fileParams = isFileUploadParameter(operation)
     if (fileParams.length === 0) return null
 
@@ -57,7 +56,6 @@ export class HttpClient {
 
     // Handle file uploads
     for (const param of fileParams) {
-      console.error(`extracting ${param}`, {params})
       const filePath = params[param]
       if (!filePath) {
         throw new Error(`File path must be provided for parameter: ${param}`)
@@ -163,7 +161,6 @@ export class HttpClient {
       }
 
       // first argument is url parameters, second is body parameters
-      console.error('calling operation', { operationId, urlParameters, bodyParams, requestConfig })
       const response = await operationFn(urlParameters, hasBody ? bodyParams : undefined, requestConfig)
 
       // Convert axios headers to Headers object
