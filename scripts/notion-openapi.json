@@ -964,6 +964,97 @@
                 "properties": {
                   "children": {
                     "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "paragraph": {
+                          "type": "object",
+                          "properties": {
+                            "rich_text": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": {
+                                        "type": "string",
+                                        "maxLength": 2000
+                                      },
+                                      "link": {
+                                        "type": ["object", "null"],
+                                        "properties": {
+                                          "url": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": ["url"]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "required": ["content"]
+                                  },
+                                  "type": {
+                                    "enum": ["text"]
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "required": ["text"]
+                              },
+                              "maxItems": 100
+                            }
+                          },
+                          "additionalProperties": false,
+                          "required": ["rich_text"]
+                        },
+                        "bulleted_list_item": {
+                          "type": "object",
+                          "properties": {
+                            "rich_text": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": {
+                                        "type": "string",
+                                        "maxLength": 2000
+                                      },
+                                      "link": {
+                                        "type": ["object", "null"],
+                                        "properties": {
+                                          "url": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": ["url"]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "required": ["content"]
+                                  },
+                                  "type": {
+                                    "enum": ["text"]
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "required": ["text"]
+                              },
+                              "maxItems": 100
+                            }
+                          },
+                          "additionalProperties": false,
+                          "required": ["rich_text"]
+                        },
+                        "type": {
+                          "enum": ["paragraph", "bulleted_list_item"]
+                        }
+                      },
+                      "additionalProperties": false
+                    },
                     "description": "Child content to append to a container block as an array of [block objects](ref:block)"
                   },
                   "after": {
