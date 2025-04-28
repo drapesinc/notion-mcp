@@ -92,7 +92,7 @@ Then, add the following to your `.cursor/mcp.json` or `claude_desktop_config.jso
         "-i",
         "-e",
         "OPENAPI_MCP_HEADERS={\"Authorization\": \"Bearer ntn_****\", \"Notion-Version\": \"2022-06-28\"}",
-        "notion-mcp-server-notion-mcp-server"
+        "notion-mcp-server"
       ]
     }
   }
