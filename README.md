@@ -22,7 +22,12 @@ For example, you can create a read-only integration token by giving only "Read c
 #### 2. Connecting content to integration:
 Ensure relevant pages and databases are connected to your integration.
 
-To do this, you'll need to visit that page, and click on the 3 dots, and select "Connect to integration". 
+To do this, visit the **Access** tab in your internal integration settings. Edit access and select the pages you'd like to use.
+![Integration Access tab](docs/images/integration-access.png)
+
+![Edit integration access](docs/images/page-access-edit.png)
+
+Alternatively, you can grant page access individually. You'll need to visit the target page, and click on the 3 dots, and select "Connect to integration". 
 
 ![Adding Integration Token to Notion Connections](docs/images/connections.png)
 
