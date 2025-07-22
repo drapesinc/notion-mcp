@@ -6,7 +6,7 @@
 > - Easy installation via standard OAuth. No need to fiddle with JSON or API token anymore.
 > - Powerful tools tailored to AI agents. These tools are designed with optimized token consumption in mind.
 > 
-> Learn more and try it out [here](https://notion.notion.site/Beta-Overview-Notion-MCP-206efdeead058060a59bf2c14202bd0a)
+> Learn more and try it out [here](https://developers.notion.com/docs/mcp)
 
 
 ![notion-mcp-sm](https://github.com/user-attachments/assets/6c07003c-8455-4636-b298-d60ffdf46cd8)
