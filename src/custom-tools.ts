@@ -354,5 +354,364 @@ export const customTools: CustomTool[] = [
         results
       }
     }
+  },
+  {
+    definition: {
+      name: 'create-task-with-project',
+      description: 'Create a new task in a Tasks database and immediately link it to a project. Sets up the task with title, status, and project relation.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          database_id: {
+            type: 'string',
+            description: 'The ID of the Tasks database to create the task in'
+          },
+          title: {
+            type: 'string',
+            description: 'Title of the task'
+          },
+          project_id: {
+            type: 'string',
+            description: 'ID of the project to link to (optional)'
+          },
+          project_property_name: {
+            type: 'string',
+            description: 'Name of the relation property for Project (default: "Project")',
+            default: 'Project'
+          },
+          status: {
+            type: 'string',
+            description: 'Initial status for the task (e.g., "To Do", "In Progress")'
+          },
+          status_property_name: {
+            type: 'string',
+            description: 'Name of the status property (default: "Status")',
+            default: 'Status'
+          },
+          do_next: {
+            type: 'string',
+            description: 'The immediate next action to take'
+          },
+          do_next_property_name: {
+            type: 'string',
+            description: 'Name of the Do Next property (default: "Do Next")',
+            default: 'Do Next'
+          },
+          area_ids: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'IDs of areas to link to'
+          },
+          area_property_name: {
+            type: 'string',
+            description: 'Name of the area relation property (default: "Area")',
+            default: 'Area'
+          },
+          initial_checklist: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Initial checklist items to add to the task page'
+          }
+        },
+        required: ['database_id', 'title']
+      }
+    },
+    handler: async (params, httpClient) => {
+      const {
+        database_id,
+        title,
+        project_id,
+        project_property_name = 'Project',
+        status,
+        status_property_name = 'Status',
+        do_next,
+        do_next_property_name = 'Do Next',
+        area_ids,
+        area_property_name = 'Area',
+        initial_checklist
+      } = params
+
+      // Build properties object
+      const properties: any = {
+        title: {
+          title: textToRichText(title)
+        }
+      }
+
+      // Add project relation if provided
+      if (project_id) {
+        properties[project_property_name] = {
+          relation: [{ id: project_id }]
+        }
+      }
+
+      // Add status if provided
+      if (status) {
+        properties[status_property_name] = {
+          status: { name: status }
+        }
+      }
+
+      // Add do_next if provided
+      if (do_next) {
+        properties[do_next_property_name] = {
+          rich_text: textToRichText(do_next)
+        }
+      }
+
+      // Add areas if provided
+      if (area_ids && area_ids.length > 0) {
+        properties[area_property_name] = {
+          relation: area_ids.map((id: string) => ({ id }))
+        }
+      }
+
+      // Create the page
+      const createResponse = await httpClient.executeOperation(
+        { method: 'post', path: '/v1/pages', operationId: 'post-page' },
+        {
+          parent: { database_id },
+          properties
+        }
+      )
+
+      const page = createResponse.data
+
+      // Add initial checklist items if provided
+      if (initial_checklist && initial_checklist.length > 0) {
+        const checklistBlocks = [
+          { type: 'heading_2', heading_2: { rich_text: textToRichText('Checklist') } },
+          ...initial_checklist.map((item: string) => ({
+            type: 'to_do',
+            to_do: { rich_text: textToRichText(item), checked: false }
+          })),
+          { type: 'heading_2', heading_2: { rich_text: textToRichText('Activity Log') } }
+        ]
+
+        await httpClient.executeOperation(
+          { method: 'patch', path: `/v1/blocks/${page.id}/children`, operationId: 'patch-block-children' },
+          { children: checklistBlocks }
+        )
+      }
+
+      return {
+        success: true,
+        task_id: page.id,
+        url: page.url,
+        title,
+        project_linked: !!project_id,
+        checklist_added: initial_checklist?.length || 0
+      }
+    }
+  },
+  {
+    definition: {
+      name: 'add-activity-log',
+      description: 'Add a timestamped activity log entry to a Notion page. Finds or creates an Activity Log section and appends the entry with timestamp.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          page_id: {
+            type: 'string',
+            description: 'The ID of the page to add the activity log entry to'
+          },
+          entry: {
+            type: 'string',
+            description: 'The activity log entry text (will be prepended with timestamp)'
+          },
+          timestamp: {
+            type: 'string',
+            description: 'Optional custom timestamp (default: current time in "YYYY-MM-DD HH:MM ET" format)'
+          },
+          timezone: {
+            type: 'string',
+            description: 'Timezone abbreviation for timestamp (default: "ET")',
+            default: 'ET'
+          }
+        },
+        required: ['page_id', 'entry']
+      }
+    },
+    handler: async (params, httpClient) => {
+      const { page_id, entry, timestamp, timezone = 'ET' } = params
+
+      // Generate timestamp if not provided
+      const now = new Date()
+      const formattedTimestamp = timestamp ||
+        `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ` +
+        `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} ${timezone}`
+
+      const logEntry = `${formattedTimestamp} — ${entry}`
+
+      // Get existing blocks to find Activity Log section
+      const blocksResponse = await httpClient.executeOperation(
+        { method: 'get', path: `/v1/blocks/${page_id}/children`, operationId: 'get-block-children' },
+        { page_size: 100 }
+      )
+
+      const blocks = blocksResponse.data.results || []
+
+      // Find Activity Log heading
+      let activityLogHeadingId: string | null = null
+      let activityLogHeadingIndex = -1
+
+      for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i]
+        if (block.type === 'heading_2' || block.type === 'heading_1') {
+          const text = richTextToPlain(block[block.type]?.rich_text || [])
+          if (text.toLowerCase().includes('activity log')) {
+            activityLogHeadingId = block.id
+            activityLogHeadingIndex = i
+            break
+          }
+        }
+      }
+
+      // If no Activity Log section, create one at the end
+      if (!activityLogHeadingId) {
+        const createSectionResponse = await httpClient.executeOperation(
+          { method: 'patch', path: `/v1/blocks/${page_id}/children`, operationId: 'patch-block-children' },
+          {
+            children: [
+              { type: 'heading_2', heading_2: { rich_text: textToRichText('Activity Log') } },
+              { type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }
+            ]
+          }
+        )
+
+        return {
+          success: true,
+          entry: logEntry,
+          section_created: true,
+          blocks_added: createSectionResponse.data.results?.map((r: any) => r.id)
+        }
+      }
+
+      // Append entry after the Activity Log heading
+      const appendResponse = await httpClient.executeOperation(
+        { method: 'patch', path: `/v1/blocks/${page_id}/children`, operationId: 'patch-block-children' },
+        {
+          after: activityLogHeadingId,
+          children: [
+            { type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }
+          ]
+        }
+      )
+
+      return {
+        success: true,
+        entry: logEntry,
+        section_created: false,
+        block_id: appendResponse.data.results?.[0]?.id
+      }
+    }
+  },
+  {
+    definition: {
+      name: 'complete-checklist-item',
+      description: 'Find a checklist item (to_do block) by text, mark it complete, and move it to the Activity Log with a timestamp.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          page_id: {
+            type: 'string',
+            description: 'The ID of the page containing the checklist'
+          },
+          item_text: {
+            type: 'string',
+            description: 'Text of the checklist item to complete (partial match supported)'
+          },
+          completion_note: {
+            type: 'string',
+            description: 'Optional note to add to the activity log entry'
+          },
+          timezone: {
+            type: 'string',
+            description: 'Timezone abbreviation for timestamp (default: "ET")',
+            default: 'ET'
+          }
+        },
+        required: ['page_id', 'item_text']
+      }
+    },
+    handler: async (params, httpClient) => {
+      const { page_id, item_text, completion_note, timezone = 'ET' } = params
+
+      // Get all blocks
+      const blocksResponse = await httpClient.executeOperation(
+        { method: 'get', path: `/v1/blocks/${page_id}/children`, operationId: 'get-block-children' },
+        { page_size: 100 }
+      )
+
+      const blocks = blocksResponse.data.results || []
+
+      // Find the to_do block matching the text
+      let targetBlock: any = null
+      let activityLogHeadingId: string | null = null
+
+      for (const block of blocks) {
+        if (block.type === 'to_do') {
+          const text = richTextToPlain(block.to_do?.rich_text || [])
+          if (text.toLowerCase().includes(item_text.toLowerCase())) {
+            targetBlock = block
+          }
+        }
+        if (block.type === 'heading_2' || block.type === 'heading_1') {
+          const text = richTextToPlain(block[block.type]?.rich_text || [])
+          if (text.toLowerCase().includes('activity log')) {
+            activityLogHeadingId = block.id
+          }
+        }
+      }
+
+      if (!targetBlock) {
+        return {
+          success: false,
+          error: `No checklist item found matching "${item_text}"`
+        }
+      }
+
+      const itemFullText = richTextToPlain(targetBlock.to_do?.rich_text || [])
+
+      // Mark the to_do as checked
+      await httpClient.executeOperation(
+        { method: 'patch', path: `/v1/blocks/${targetBlock.id}`, operationId: 'update-a-block' },
+        {
+          to_do: {
+            checked: true
+          }
+        }
+      )
+
+      // Generate timestamp
+      const now = new Date()
+      const formattedTimestamp =
+        `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ` +
+        `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} ${timezone}`
+
+      const logEntry = completion_note
+        ? `${formattedTimestamp} — ✓ ${itemFullText} (${completion_note})`
+        : `${formattedTimestamp} — ✓ ${itemFullText}`
+
+      // Add to activity log
+      if (activityLogHeadingId) {
+        await httpClient.executeOperation(
+          { method: 'patch', path: `/v1/blocks/${page_id}/children`, operationId: 'patch-block-children' },
+          {
+            after: activityLogHeadingId,
+            children: [
+              { type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }
+            ]
+          }
+        )
+      }
+
+      return {
+        success: true,
+        completed_item: itemFullText,
+        activity_logged: !!activityLogHeadingId,
+        log_entry: logEntry
+      }
+    }
   }
 ]
