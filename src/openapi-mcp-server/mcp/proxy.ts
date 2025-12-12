@@ -5,6 +5,7 @@ import { OpenAPIToMCPConverter } from '../openapi/parser'
 import { HttpClient, HttpClientError } from '../client/http-client'
 import { OpenAPIV3 } from 'openapi-types'
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
+import { loadToolsetConfig, isApiOperationEnabled, isCustomToolEnabled, describeConfig } from '../../toolset-config'
 
 type PathItemObject = OpenAPIV3.PathItemObject & {
   get?: OpenAPIV3.OperationObject
@@ -40,6 +41,7 @@ export class MCPProxy {
   private tools: Record<string, NewToolDefinition>
   private openApiLookup: Record<string, OpenAPIV3.OperationObject & { method: string; path: string }>
   private customTools: Map<string, CustomTool> = new Map()
+  private toolsetConfig: ReturnType<typeof loadToolsetConfig>
 
   constructor(name: string, openApiSpec: OpenAPIV3.Document) {
     this.server = new Server({ name, version: '1.0.0' }, { capabilities: { tools: {} } })
@@ -54,6 +56,10 @@ export class MCPProxy {
       },
       openApiSpec,
     )
+
+    // Load toolset configuration
+    this.toolsetConfig = loadToolsetConfig()
+    console.error(describeConfig(this.toolsetConfig))
 
     // Convert OpenAPI spec to MCP tools
     const converter = new OpenAPIToMCPConverter(openApiSpec)
@@ -77,8 +83,15 @@ export class MCPProxy {
       const tools: Tool[] = []
 
       // Add methods as separate tools to match the MCP format
+      // Filter based on toolset configuration
       Object.entries(this.tools).forEach(([toolName, def]) => {
         def.methods.forEach(method => {
+          // Check if this API operation is enabled
+          // The method.name is the operationId from OpenAPI spec
+          if (!isApiOperationEnabled(method.name, this.toolsetConfig)) {
+            return // Skip disabled operations
+          }
+
           const toolNameWithMethod = `${toolName}-${method.name}`;
           const truncatedToolName = this.truncateToolName(toolNameWithMethod);
           tools.push({
@@ -89,9 +102,11 @@ export class MCPProxy {
         })
       })
 
-      // Add custom tools
-      for (const [, customTool] of this.customTools) {
-        tools.push(customTool.definition)
+      // Add custom tools (filtered by config)
+      for (const [toolName, customTool] of this.customTools) {
+        if (isCustomToolEnabled(toolName, this.toolsetConfig)) {
+          tools.push(customTool.definition)
+        }
       }
 
       return { tools }
@@ -104,6 +119,21 @@ export class MCPProxy {
       // Check if it's a custom tool first
       const customTool = this.customTools.get(name)
       if (customTool) {
+        // Verify the custom tool is enabled
+        if (!isCustomToolEnabled(name, this.toolsetConfig)) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  status: 'error',
+                  message: `Tool '${name}' is not enabled in the current toolset configuration (mode: ${this.toolsetConfig.mode})`,
+                }),
+              },
+            ],
+          }
+        }
+
         try {
           const result = await customTool.handler(params || {}, this.httpClient)
           return {
@@ -134,6 +164,22 @@ export class MCPProxy {
       const operation = this.findOperation(name)
       if (!operation) {
         throw new Error(`Method ${name} not found`)
+      }
+
+      // Verify the API operation is enabled
+      const operationId = operation.operationId || name
+      if (!isApiOperationEnabled(operationId, this.toolsetConfig)) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                status: 'error',
+                message: `API operation '${operationId}' is not enabled in the current toolset configuration (mode: ${this.toolsetConfig.mode})`,
+              }),
+            },
+          ],
+        }
       }
 
       try {

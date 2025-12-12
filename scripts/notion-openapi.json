@@ -1399,6 +1399,254 @@
                           "properties": {},
                           "description": "A horizontal divider line"
                         },
+                        "bookmark": {
+                          "type": "object",
+                          "properties": {
+                            "url": {
+                              "type": "string",
+                              "description": "The URL to bookmark"
+                            },
+                            "caption": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": { "type": "string" }
+                                    },
+                                    "required": ["content"]
+                                  },
+                                  "type": { "enum": ["text"], "type": "string" }
+                                },
+                                "required": ["text"]
+                              }
+                            }
+                          },
+                          "required": ["url"]
+                        },
+                        "embed": {
+                          "type": "object",
+                          "properties": {
+                            "url": {
+                              "type": "string",
+                              "description": "URL to embed (YouTube, Twitter, Maps, Figma, etc.)"
+                            }
+                          },
+                          "required": ["url"]
+                        },
+                        "image": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "enum": ["external"],
+                              "type": "string"
+                            },
+                            "external": {
+                              "type": "object",
+                              "properties": {
+                                "url": {
+                                  "type": "string",
+                                  "description": "URL of the external image"
+                                }
+                              },
+                              "required": ["url"]
+                            },
+                            "caption": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": { "type": "string" }
+                                    },
+                                    "required": ["content"]
+                                  },
+                                  "type": { "enum": ["text"], "type": "string" }
+                                },
+                                "required": ["text"]
+                              }
+                            }
+                          },
+                          "required": ["type", "external"]
+                        },
+                        "video": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "enum": ["external"],
+                              "type": "string"
+                            },
+                            "external": {
+                              "type": "object",
+                              "properties": {
+                                "url": {
+                                  "type": "string",
+                                  "description": "URL of the external video"
+                                }
+                              },
+                              "required": ["url"]
+                            }
+                          },
+                          "required": ["type", "external"]
+                        },
+                        "file": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "enum": ["external"],
+                              "type": "string"
+                            },
+                            "external": {
+                              "type": "object",
+                              "properties": {
+                                "url": {
+                                  "type": "string",
+                                  "description": "URL of the external file"
+                                }
+                              },
+                              "required": ["url"]
+                            },
+                            "caption": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": { "type": "string" }
+                                    },
+                                    "required": ["content"]
+                                  },
+                                  "type": { "enum": ["text"], "type": "string" }
+                                },
+                                "required": ["text"]
+                              }
+                            }
+                          },
+                          "required": ["type", "external"]
+                        },
+                        "pdf": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "enum": ["external"],
+                              "type": "string"
+                            },
+                            "external": {
+                              "type": "object",
+                              "properties": {
+                                "url": {
+                                  "type": "string",
+                                  "description": "URL of the external PDF"
+                                }
+                              },
+                              "required": ["url"]
+                            }
+                          },
+                          "required": ["type", "external"]
+                        },
+                        "equation": {
+                          "type": "object",
+                          "properties": {
+                            "expression": {
+                              "type": "string",
+                              "description": "LaTeX expression for the equation"
+                            }
+                          },
+                          "required": ["expression"]
+                        },
+                        "table_of_contents": {
+                          "type": "object",
+                          "properties": {
+                            "color": {
+                              "type": "string",
+                              "description": "Color for the table of contents"
+                            }
+                          }
+                        },
+                        "breadcrumb": {
+                          "type": "object",
+                          "properties": {},
+                          "description": "A breadcrumb block showing page hierarchy"
+                        },
+                        "column_list": {
+                          "type": "object",
+                          "properties": {},
+                          "description": "Container for columns - add column children via separate calls"
+                        },
+                        "column": {
+                          "type": "object",
+                          "properties": {},
+                          "description": "A single column within a column_list"
+                        },
+                        "link_to_page": {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "enum": ["page_id", "database_id"],
+                              "type": "string"
+                            },
+                            "page_id": {
+                              "type": "string",
+                              "description": "ID of the page to link to (when type is page_id)"
+                            },
+                            "database_id": {
+                              "type": "string",
+                              "description": "ID of the database to link to (when type is database_id)"
+                            }
+                          },
+                          "required": ["type"]
+                        },
+                        "table": {
+                          "type": "object",
+                          "properties": {
+                            "table_width": {
+                              "type": "integer",
+                              "description": "Number of columns in the table (1-100)"
+                            },
+                            "has_column_header": {
+                              "type": "boolean",
+                              "description": "Whether the first row is a header"
+                            },
+                            "has_row_header": {
+                              "type": "boolean",
+                              "description": "Whether the first column is a header"
+                            }
+                          },
+                          "required": ["table_width"]
+                        },
+                        "table_row": {
+                          "type": "object",
+                          "properties": {
+                            "cells": {
+                              "type": "array",
+                              "description": "Array of cell contents, each cell is an array of rich text",
+                              "items": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "text": {
+                                      "type": "object",
+                                      "properties": {
+                                        "content": { "type": "string" }
+                                      },
+                                      "required": ["content"]
+                                    },
+                                    "type": { "enum": ["text"], "type": "string" }
+                                  },
+                                  "required": ["text"]
+                                }
+                              }
+                            }
+                          },
+                          "required": ["cells"]
+                        },
                         "type": {
                           "enum": [
                             "paragraph",
@@ -1412,7 +1660,21 @@
                             "code",
                             "quote",
                             "callout",
-                            "divider"
+                            "divider",
+                            "bookmark",
+                            "embed",
+                            "image",
+                            "video",
+                            "file",
+                            "pdf",
+                            "equation",
+                            "table_of_contents",
+                            "breadcrumb",
+                            "column_list",
+                            "column",
+                            "link_to_page",
+                            "table",
+                            "table_row"
                           ],
                           "type": "string"
                         }

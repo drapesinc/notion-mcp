@@ -9,15 +9,191 @@ export interface CustomTool {
   handler: CustomToolHandler
 }
 
-// Helper to create rich_text from plain text
-function textToRichText(content: string) {
+// Rich text formatting types
+interface RichTextAnnotations {
+  bold?: boolean
+  italic?: boolean
+  strikethrough?: boolean
+  underline?: boolean
+  code?: boolean
+}
+
+interface RichTextSegment {
+  type: 'text'
+  text: {
+    content: string
+    link?: { url: string } | null
+  }
+  annotations?: RichTextAnnotations
+}
+
+/**
+ * Parse text with markdown-like formatting into Notion rich_text array
+ * Supports: **bold**, *italic*, ~~strikethrough~~, `code`, [link](url)
+ */
+function textToRichText(content: string): RichTextSegment[] {
+  const segments: RichTextSegment[] = []
+
+  // Regex patterns for inline formatting
+  // Process in order: links first, then other formatting
+  const patterns = [
+    // Links: [text](url)
+    { pattern: /\[([^\]]+)\]\(([^)]+)\)/g, type: 'link' },
+    // Bold: **text**
+    { pattern: /\*\*([^*]+)\*\*/g, type: 'bold' },
+    // Italic: *text* (single asterisk, not starting/ending with space)
+    { pattern: /(?<!\*)\*([^*]+)\*(?!\*)/g, type: 'italic' },
+    // Strikethrough: ~~text~~
+    { pattern: /~~([^~]+)~~/g, type: 'strikethrough' },
+    // Code: `text`
+    { pattern: /`([^`]+)`/g, type: 'code' },
+  ]
+
+  // Simple approach: find all formatted spans, then build segments
+  interface Span {
+    start: number
+    end: number
+    content: string
+    annotations: RichTextAnnotations
+    link?: string
+  }
+
+  const spans: Span[] = []
+
+  // First pass: extract all formatted spans
+  for (const { pattern, type } of patterns) {
+    // Reset lastIndex for global regex
+    pattern.lastIndex = 0
+    let match: RegExpExecArray | null
+
+    while ((match = pattern.exec(content)) !== null) {
+      const fullMatch = match[0]
+      const innerContent = match[1]
+      const start = match.index
+      const end = start + fullMatch.length
+
+      const annotations: RichTextAnnotations = {}
+      let link: string | undefined
+
+      if (type === 'bold') annotations.bold = true
+      if (type === 'italic') annotations.italic = true
+      if (type === 'strikethrough') annotations.strikethrough = true
+      if (type === 'code') annotations.code = true
+      if (type === 'link') link = match[2]
+
+      spans.push({
+        start,
+        end,
+        content: innerContent,
+        annotations,
+        link
+      })
+    }
+  }
+
+  // Sort spans by start position
+  spans.sort((a, b) => a.start - b.start)
+
+  // Remove overlapping spans (keep first one)
+  const filteredSpans: Span[] = []
+  let lastEnd = 0
+  for (const span of spans) {
+    if (span.start >= lastEnd) {
+      filteredSpans.push(span)
+      lastEnd = span.end
+    }
+  }
+
+  // Build segments from spans and gaps
+  let currentPos = 0
+
+  for (const span of filteredSpans) {
+    // Add plain text before this span
+    if (span.start > currentPos) {
+      const plainText = content.substring(currentPos, span.start)
+      if (plainText) {
+        segments.push({
+          type: 'text',
+          text: { content: plainText }
+        })
+      }
+    }
+
+    // Add the formatted span
+    const segment: RichTextSegment = {
+      type: 'text',
+      text: { content: span.content }
+    }
+
+    if (Object.keys(span.annotations).length > 0) {
+      segment.annotations = span.annotations
+    }
+
+    if (span.link) {
+      segment.text.link = { url: span.link }
+    }
+
+    segments.push(segment)
+    currentPos = span.end
+  }
+
+  // Add any remaining plain text
+  if (currentPos < content.length) {
+    const remaining = content.substring(currentPos)
+    if (remaining) {
+      segments.push({
+        type: 'text',
+        text: { content: remaining }
+      })
+    }
+  }
+
+  // If no segments were created (no formatting), return simple text
+  if (segments.length === 0) {
+    return [{ type: 'text', text: { content } }]
+  }
+
+  return segments
+}
+
+/**
+ * Simple version for cases where we want plain text only
+ */
+function plainTextToRichText(content: string): RichTextSegment[] {
   return [{ type: 'text', text: { content } }]
+}
+
+/**
+ * Create a date mention rich text (for Notion @date links)
+ */
+function dateMentionRichText(dateStr: string): any[] {
+  return [{
+    type: 'mention',
+    mention: {
+      type: 'date',
+      date: {
+        start: dateStr,
+        end: null,
+        time_zone: null
+      }
+    }
+  }]
 }
 
 // Extract plain text from rich_text array
 function richTextToPlain(richText: any[]): string {
   if (!richText || !Array.isArray(richText)) return ''
   return richText.map(rt => rt.plain_text || rt.text?.content || '').join('')
+}
+
+// Check if a rich_text array contains a date mention matching the given date
+function hasDateMention(richText: any[], dateStr: string): boolean {
+  if (!richText || !Array.isArray(richText)) return false
+  return richText.some(rt =>
+    rt.type === 'mention' &&
+    rt.mention?.type === 'date' &&
+    rt.mention?.date?.start?.startsWith(dateStr)
+  )
 }
 
 // Summarize block structure
@@ -66,8 +242,8 @@ export const customTools: CustomTool[] = [
 
       // 1. Get the page
       const pageResponse = await httpClient.executeOperation(
-        { method: 'get', path: `/v1/pages/${page_id}`, operationId: 'retrieve-a-page' },
-        {}
+        { method: 'get', path: '/v1/pages/{page_id}', operationId: 'retrieve-a-page' },
+        { page_id }
       )
       const page = pageResponse.data
 
@@ -133,8 +309,8 @@ export const customTools: CustomTool[] = [
       if (include_blocks) {
         try {
           const blocksResponse = await httpClient.executeOperation(
-            { method: 'get', path: `/v1/blocks/${page_id}/children`, operationId: 'get-block-children' },
-            { page_size: block_limit }
+            { method: 'get', path: '/v1/blocks/{block_id}/children', operationId: 'get-block-children' },
+            { block_id: page_id, page_size: block_limit }
           )
           blocks = blocksResponse.data.results || []
           blockSummary = summarizeBlocks(blocks)
@@ -150,8 +326,8 @@ export const customTools: CustomTool[] = [
       if (page.parent?.type === 'database_id') {
         try {
           const dbResponse = await httpClient.executeOperation(
-            { method: 'get', path: `/v1/databases/${page.parent.database_id}`, operationId: 'retrieve-a-database' },
-            {}
+            { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
+            { database_id: page.parent.database_id }
           )
           const db = dbResponse.data
           dbSummaries['_parent_database'] = {
@@ -180,7 +356,7 @@ export const customTools: CustomTool[] = [
   {
     definition: {
       name: 'append-structured-content',
-      description: 'Append structured content to a Notion page using simple syntax. Supports headings (h1:, h2:, h3:), bullets (- ), numbered lists (1. ), todos ([] or [x]), quotes (> ), dividers (---), and paragraphs.',
+      description: 'Append structured content to a Notion page using simple syntax. Supports headings (h1:, h2:, h3:), bullets (- ), numbered lists (1. ), todos ([] or [x]), quotes (> ), dividers (---), and paragraphs. Also supports inline formatting: **bold**, *italic*, ~~strikethrough~~, `code`, and [links](url).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -190,7 +366,7 @@ export const customTools: CustomTool[] = [
           },
           content: {
             type: 'string',
-            description: 'Content in simple markup format. Each line becomes a block. Use h1:, h2:, h3: for headings, - for bullets, 1. for numbered, [] for unchecked todo, [x] for checked todo, > for quotes, --- for dividers.'
+            description: 'Content in simple markup format. Each line becomes a block. Use h1:, h2:, h3: for headings, - for bullets, 1. for numbered, [] for unchecked todo, [x] for checked todo, > for quotes, --- for dividers. Inline formatting: **bold**, *italic*, ~~strikethrough~~, `code`, [link](url).'
           },
           after: {
             type: 'string',
@@ -272,8 +448,8 @@ export const customTools: CustomTool[] = [
       if (after) requestBody.after = after
 
       const response = await httpClient.executeOperation(
-        { method: 'patch', path: `/v1/blocks/${page_id}/children`, operationId: 'patch-block-children' },
-        requestBody
+        { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
+        { block_id: page_id, ...requestBody }
       )
 
       return {
@@ -480,7 +656,7 @@ export const customTools: CustomTool[] = [
       // Add initial checklist items if provided
       if (initial_checklist && initial_checklist.length > 0) {
         const checklistBlocks = [
-          { type: 'heading_2', heading_2: { rich_text: textToRichText('Checklist') } },
+          { type: 'heading_2', heading_2: { rich_text: textToRichText('To Do') } },
           ...initial_checklist.map((item: string) => ({
             type: 'to_do',
             to_do: { rich_text: textToRichText(item), checked: false }
@@ -489,8 +665,8 @@ export const customTools: CustomTool[] = [
         ]
 
         await httpClient.executeOperation(
-          { method: 'patch', path: `/v1/blocks/${page.id}/children`, operationId: 'patch-block-children' },
-          { children: checklistBlocks }
+          { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
+          { block_id: page.id, children: checklistBlocks }
         )
       }
 
@@ -535,18 +711,18 @@ export const customTools: CustomTool[] = [
     handler: async (params, httpClient) => {
       const { page_id, entry, timestamp, timezone = 'ET' } = params
 
-      // Generate timestamp if not provided
+      // Generate date and time components
       const now = new Date()
-      const formattedTimestamp = timestamp ||
-        `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ` +
-        `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} ${timezone}`
+      const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} ${timezone}`
 
-      const logEntry = `${formattedTimestamp} — ${entry}`
+      // Log entry with just time (date is in the toggle header)
+      const logEntry = timestamp ? `${timestamp} — ${entry}` : `${timeStr} — ${entry}`
 
       // Get existing blocks to find Activity Log section
       const blocksResponse = await httpClient.executeOperation(
-        { method: 'get', path: `/v1/blocks/${page_id}/children`, operationId: 'get-block-children' },
-        { page_size: 100 }
+        { method: 'get', path: '/v1/blocks/{block_id}/children', operationId: 'get-block-children' },
+        { block_id: page_id, page_size: 100 }
       )
 
       const blocks = blocksResponse.data.results || []
@@ -567,13 +743,63 @@ export const customTools: CustomTool[] = [
         }
       }
 
-      // If no Activity Log section, create one at the end
+      // If no Activity Log section, create one with a date toggle
       if (!activityLogHeadingId) {
         const createSectionResponse = await httpClient.executeOperation(
-          { method: 'patch', path: `/v1/blocks/${page_id}/children`, operationId: 'patch-block-children' },
+          { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
           {
+            block_id: page_id,
             children: [
               { type: 'heading_2', heading_2: { rich_text: textToRichText('Activity Log') } },
+              {
+                type: 'toggle',
+                toggle: {
+                  rich_text: dateMentionRichText(dateStr),
+                  children: [
+                    { type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }
+                  ]
+                }
+              }
+            ]
+          }
+        )
+
+        return {
+          success: true,
+          entry: logEntry,
+          date: dateStr,
+          section_created: true,
+          toggle_created: true,
+          blocks_added: createSectionResponse.data.results?.map((r: any) => r.id)
+        }
+      }
+
+      // Look for toggles after the Activity Log heading to find today's date toggle
+      let todayToggleId: string | null = null
+
+      for (let i = activityLogHeadingIndex + 1; i < blocks.length; i++) {
+        const block = blocks[i]
+        // Stop if we hit another heading (end of Activity Log section)
+        if (block.type === 'heading_1' || block.type === 'heading_2' || block.type === 'heading_3') {
+          break
+        }
+        if (block.type === 'toggle') {
+          const toggleRichText = block.toggle?.rich_text || []
+          // Check for date mention or plain text match
+          if (hasDateMention(toggleRichText, dateStr) || richTextToPlain(toggleRichText) === dateStr) {
+            todayToggleId = block.id
+            break
+          }
+        }
+      }
+
+      // If today's toggle exists, append to it
+      if (todayToggleId) {
+        const appendResponse = await httpClient.executeOperation(
+          { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
+          {
+            block_id: todayToggleId,
+            children: [
               { type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }
             ]
           }
@@ -582,18 +808,29 @@ export const customTools: CustomTool[] = [
         return {
           success: true,
           entry: logEntry,
-          section_created: true,
-          blocks_added: createSectionResponse.data.results?.map((r: any) => r.id)
+          date: dateStr,
+          section_created: false,
+          toggle_created: false,
+          block_id: appendResponse.data.results?.[0]?.id
         }
       }
 
-      // Append entry after the Activity Log heading
-      const appendResponse = await httpClient.executeOperation(
-        { method: 'patch', path: `/v1/blocks/${page_id}/children`, operationId: 'patch-block-children' },
+      // Create a new toggle for today's date after the Activity Log heading
+      const createToggleResponse = await httpClient.executeOperation(
+        { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
         {
+          block_id: page_id,
           after: activityLogHeadingId,
           children: [
-            { type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }
+            {
+              type: 'toggle',
+              toggle: {
+                rich_text: dateMentionRichText(dateStr),
+                children: [
+                  { type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }
+                ]
+              }
+            }
           ]
         }
       )
@@ -601,8 +838,10 @@ export const customTools: CustomTool[] = [
       return {
         success: true,
         entry: logEntry,
+        date: dateStr,
         section_created: false,
-        block_id: appendResponse.data.results?.[0]?.id
+        toggle_created: true,
+        block_id: createToggleResponse.data.results?.[0]?.id
       }
     }
   },
@@ -639,17 +878,19 @@ export const customTools: CustomTool[] = [
 
       // Get all blocks
       const blocksResponse = await httpClient.executeOperation(
-        { method: 'get', path: `/v1/blocks/${page_id}/children`, operationId: 'get-block-children' },
-        { page_size: 100 }
+        { method: 'get', path: '/v1/blocks/{block_id}/children', operationId: 'get-block-children' },
+        { block_id: page_id, page_size: 100 }
       )
 
       const blocks = blocksResponse.data.results || []
 
-      // Find the to_do block matching the text
+      // Find the to_do block matching the text and Activity Log heading
       let targetBlock: any = null
       let activityLogHeadingId: string | null = null
+      let activityLogHeadingIndex = -1
 
-      for (const block of blocks) {
+      for (let i = 0; i < blocks.length; i++) {
+        const block = blocks[i]
         if (block.type === 'to_do') {
           const text = richTextToPlain(block.to_do?.rich_text || [])
           if (text.toLowerCase().includes(item_text.toLowerCase())) {
@@ -660,6 +901,7 @@ export const customTools: CustomTool[] = [
           const text = richTextToPlain(block[block.type]?.rich_text || [])
           if (text.toLowerCase().includes('activity log')) {
             activityLogHeadingId = block.id
+            activityLogHeadingIndex = i
           }
         }
       }
@@ -675,41 +917,83 @@ export const customTools: CustomTool[] = [
 
       // Mark the to_do as checked
       await httpClient.executeOperation(
-        { method: 'patch', path: `/v1/blocks/${targetBlock.id}`, operationId: 'update-a-block' },
+        { method: 'patch', path: '/v1/blocks/{block_id}', operationId: 'update-a-block' },
         {
+          block_id: targetBlock.id,
           to_do: {
             checked: true
           }
         }
       )
 
-      // Generate timestamp
+      // Generate date and time components
       const now = new Date()
-      const formattedTimestamp =
-        `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ` +
-        `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} ${timezone}`
+      const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} ${timezone}`
 
       const logEntry = completion_note
-        ? `${formattedTimestamp} — ✓ ${itemFullText} (${completion_note})`
-        : `${formattedTimestamp} — ✓ ${itemFullText}`
+        ? `${timeStr} — ✓ ${itemFullText} (${completion_note})`
+        : `${timeStr} — ✓ ${itemFullText}`
 
-      // Add to activity log
+      // Add to activity log with date toggle
       if (activityLogHeadingId) {
-        await httpClient.executeOperation(
-          { method: 'patch', path: `/v1/blocks/${page_id}/children`, operationId: 'patch-block-children' },
-          {
-            after: activityLogHeadingId,
-            children: [
-              { type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }
-            ]
+        // Look for today's date toggle
+        let todayToggleId: string | null = null
+
+        for (let i = activityLogHeadingIndex + 1; i < blocks.length; i++) {
+          const block = blocks[i]
+          if (block.type === 'heading_1' || block.type === 'heading_2' || block.type === 'heading_3') {
+            break
           }
-        )
+          if (block.type === 'toggle') {
+            const toggleRichText = block.toggle?.rich_text || []
+            // Check for date mention or plain text match
+            if (hasDateMention(toggleRichText, dateStr) || richTextToPlain(toggleRichText) === dateStr) {
+              todayToggleId = block.id
+              break
+            }
+          }
+        }
+
+        if (todayToggleId) {
+          // Append to existing toggle
+          await httpClient.executeOperation(
+            { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
+            {
+              block_id: todayToggleId,
+              children: [
+                { type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }
+              ]
+            }
+          )
+        } else {
+          // Create new toggle for today
+          await httpClient.executeOperation(
+            { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
+            {
+              block_id: page_id,
+              after: activityLogHeadingId,
+              children: [
+                {
+                  type: 'toggle',
+                  toggle: {
+                    rich_text: dateMentionRichText(dateStr),
+                    children: [
+                      { type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }
+                    ]
+                  }
+                }
+              ]
+            }
+          )
+        }
       }
 
       return {
         success: true,
         completed_item: itemFullText,
         activity_logged: !!activityLogHeadingId,
+        date: dateStr,
         log_entry: logEntry
       }
     }
