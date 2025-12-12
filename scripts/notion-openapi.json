@@ -1082,15 +1082,341 @@
                             "rich_text"
                           ]
                         },
+                        "numbered_list_item": {
+                          "type": "object",
+                          "properties": {
+                            "rich_text": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": {
+                                        "type": "string"
+                                      },
+                                      "link": {
+                                        "type": ["object", "null"]
+                                      }
+                                    },
+                                    "required": ["content"]
+                                  },
+                                  "type": {
+                                    "enum": ["text"],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["text"]
+                              },
+                              "maxItems": 100
+                            }
+                          },
+                          "required": ["rich_text"]
+                        },
+                        "heading_1": {
+                          "type": "object",
+                          "properties": {
+                            "rich_text": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": {
+                                        "type": "string"
+                                      },
+                                      "link": {
+                                        "type": ["object", "null"]
+                                      }
+                                    },
+                                    "required": ["content"]
+                                  },
+                                  "type": {
+                                    "enum": ["text"],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["text"]
+                              },
+                              "maxItems": 100
+                            },
+                            "is_toggleable": {
+                              "type": "boolean",
+                              "default": false
+                            }
+                          },
+                          "required": ["rich_text"]
+                        },
+                        "heading_2": {
+                          "type": "object",
+                          "properties": {
+                            "rich_text": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": {
+                                        "type": "string"
+                                      },
+                                      "link": {
+                                        "type": ["object", "null"]
+                                      }
+                                    },
+                                    "required": ["content"]
+                                  },
+                                  "type": {
+                                    "enum": ["text"],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["text"]
+                              },
+                              "maxItems": 100
+                            },
+                            "is_toggleable": {
+                              "type": "boolean",
+                              "default": false
+                            }
+                          },
+                          "required": ["rich_text"]
+                        },
+                        "heading_3": {
+                          "type": "object",
+                          "properties": {
+                            "rich_text": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": {
+                                        "type": "string"
+                                      },
+                                      "link": {
+                                        "type": ["object", "null"]
+                                      }
+                                    },
+                                    "required": ["content"]
+                                  },
+                                  "type": {
+                                    "enum": ["text"],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["text"]
+                              },
+                              "maxItems": 100
+                            },
+                            "is_toggleable": {
+                              "type": "boolean",
+                              "default": false
+                            }
+                          },
+                          "required": ["rich_text"]
+                        },
+                        "to_do": {
+                          "type": "object",
+                          "properties": {
+                            "rich_text": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": {
+                                        "type": "string"
+                                      },
+                                      "link": {
+                                        "type": ["object", "null"]
+                                      }
+                                    },
+                                    "required": ["content"]
+                                  },
+                                  "type": {
+                                    "enum": ["text"],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["text"]
+                              },
+                              "maxItems": 100
+                            },
+                            "checked": {
+                              "type": "boolean",
+                              "default": false
+                            }
+                          },
+                          "required": ["rich_text"]
+                        },
+                        "toggle": {
+                          "type": "object",
+                          "properties": {
+                            "rich_text": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": {
+                                        "type": "string"
+                                      },
+                                      "link": {
+                                        "type": ["object", "null"]
+                                      }
+                                    },
+                                    "required": ["content"]
+                                  },
+                                  "type": {
+                                    "enum": ["text"],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["text"]
+                              },
+                              "maxItems": 100
+                            }
+                          },
+                          "required": ["rich_text"]
+                        },
+                        "code": {
+                          "type": "object",
+                          "properties": {
+                            "rich_text": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": ["content"]
+                                  },
+                                  "type": {
+                                    "enum": ["text"],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["text"]
+                              }
+                            },
+                            "language": {
+                              "type": "string",
+                              "description": "Programming language for syntax highlighting (e.g., javascript, python, typescript)"
+                            }
+                          },
+                          "required": ["rich_text", "language"]
+                        },
+                        "quote": {
+                          "type": "object",
+                          "properties": {
+                            "rich_text": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": {
+                                        "type": "string"
+                                      },
+                                      "link": {
+                                        "type": ["object", "null"]
+                                      }
+                                    },
+                                    "required": ["content"]
+                                  },
+                                  "type": {
+                                    "enum": ["text"],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["text"]
+                              },
+                              "maxItems": 100
+                            }
+                          },
+                          "required": ["rich_text"]
+                        },
+                        "callout": {
+                          "type": "object",
+                          "properties": {
+                            "rich_text": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "text": {
+                                    "type": "object",
+                                    "properties": {
+                                      "content": {
+                                        "type": "string"
+                                      },
+                                      "link": {
+                                        "type": ["object", "null"]
+                                      }
+                                    },
+                                    "required": ["content"]
+                                  },
+                                  "type": {
+                                    "enum": ["text"],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": ["text"]
+                              },
+                              "maxItems": 100
+                            },
+                            "icon": {
+                              "type": "object",
+                              "properties": {
+                                "emoji": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "required": ["rich_text"]
+                        },
+                        "divider": {
+                          "type": "object",
+                          "properties": {},
+                          "description": "A horizontal divider line"
+                        },
                         "type": {
                           "enum": [
                             "paragraph",
-                            "bulleted_list_item"
+                            "bulleted_list_item",
+                            "numbered_list_item",
+                            "heading_1",
+                            "heading_2",
+                            "heading_3",
+                            "to_do",
+                            "toggle",
+                            "code",
+                            "quote",
+                            "callout",
+                            "divider"
                           ],
                           "type": "string"
                         }
-                      },
-                      "additionalProperties": false
+                      }
                     },
                     "description": "Child content to append to a container block as an array of [block objects](ref:block)"
                   },
@@ -1149,10 +1475,33 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "type": {
+                  "paragraph": {
                     "type": "object",
-                    "description": "The [block object `type`](ref:block#block-object-keys) value with the properties to be updated. Currently only `text` (for supported block types) and `checked` (for `to_do` blocks) fields can be updated.",
-                    "properties": {}
+                    "description": "Paragraph block properties to update",
+                    "properties": {
+                      "rich_text": {
+                        "type": "array",
+                        "items": {
+                          "type": "object"
+                        }
+                      }
+                    }
+                  },
+                  "to_do": {
+                    "type": "object",
+                    "description": "To-do block properties to update",
+                    "properties": {
+                      "rich_text": {
+                        "type": "array",
+                        "items": {
+                          "type": "object"
+                        }
+                      },
+                      "checked": {
+                        "type": "boolean",
+                        "description": "Whether the to_do is checked"
+                      }
+                    }
                   },
                   "archived": {
                     "type": "boolean",
