@@ -23,12 +23,23 @@ type NewToolDefinition = {
   }>
 }
 
+// Custom tool interface
+export interface CustomToolHandler {
+  (params: Record<string, any>, httpClient: HttpClient): Promise<any>
+}
+
+export interface CustomTool {
+  definition: Tool
+  handler: CustomToolHandler
+}
+
 // import this class, extend and return server
 export class MCPProxy {
   private server: Server
   private httpClient: HttpClient
   private tools: Record<string, NewToolDefinition>
   private openApiLookup: Record<string, OpenAPIV3.OperationObject & { method: string; path: string }>
+  private customTools: Map<string, CustomTool> = new Map()
 
   constructor(name: string, openApiSpec: OpenAPIV3.Document) {
     this.server = new Server({ name, version: '1.0.0' }, { capabilities: { tools: {} } })
@@ -53,6 +64,13 @@ export class MCPProxy {
     this.setupHandlers()
   }
 
+  // Register custom tools
+  registerCustomTools(tools: CustomTool[]) {
+    for (const tool of tools) {
+      this.customTools.set(tool.definition.name, tool)
+    }
+  }
+
   private setupHandlers() {
     // Handle tool listing
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -71,12 +89,46 @@ export class MCPProxy {
         })
       })
 
+      // Add custom tools
+      for (const [, customTool] of this.customTools) {
+        tools.push(customTool.definition)
+      }
+
       return { tools }
     })
 
     // Handle tool calling
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: params } = request.params
+
+      // Check if it's a custom tool first
+      const customTool = this.customTools.get(name)
+      if (customTool) {
+        try {
+          const result = await customTool.handler(params || {}, this.httpClient)
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(result),
+              },
+            ],
+          }
+        } catch (error) {
+          console.error('Error in custom tool call', error)
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  status: 'error',
+                  message: error instanceof Error ? error.message : 'Unknown error',
+                }),
+              },
+            ],
+          }
+        }
+      }
 
       // Find the operation in OpenAPI spec
       const operation = this.findOperation(name)
