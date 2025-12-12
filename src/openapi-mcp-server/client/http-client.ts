@@ -32,8 +32,11 @@ export class HttpClientError extends Error {
 export class HttpClient {
   private api: Promise<AxiosInstance>
   private client: OpenAPIClientAxios
+  private openApiSpec: OpenAPIV3.Document | OpenAPIV3_1.Document
+  private operationCache: Map<string, OpenAPIV3.OperationObject & { method: string; path: string }> = new Map()
 
   constructor(config: HttpClientConfig, openApiSpec: OpenAPIV3.Document | OpenAPIV3_1.Document) {
+    this.openApiSpec = openApiSpec
     // @ts-expect-error
     this.client = new (OpenAPIClientAxios.default ?? OpenAPIClientAxios)({
       definition: openApiSpec,
@@ -47,6 +50,35 @@ export class HttpClient {
       },
     })
     this.api = this.client.init()
+  }
+
+  /**
+   * Look up an operation from the OpenAPI spec by operationId
+   */
+  getOperationById(operationId: string): (OpenAPIV3.OperationObject & { method: string; path: string }) | null {
+    // Check cache first
+    if (this.operationCache.has(operationId)) {
+      return this.operationCache.get(operationId)!
+    }
+
+    // Search through paths
+    const paths = this.openApiSpec.paths
+    if (!paths) return null
+
+    for (const [path, pathItem] of Object.entries(paths)) {
+      if (!pathItem) continue
+      const methods = ['get', 'post', 'put', 'delete', 'patch', 'head', 'options'] as const
+      for (const method of methods) {
+        const operation = (pathItem as any)[method] as OpenAPIV3.OperationObject | undefined
+        if (operation?.operationId === operationId) {
+          const result = { ...operation, method, path }
+          this.operationCache.set(operationId, result)
+          return result
+        }
+      }
+    }
+
+    return null
   }
 
   private async prepareFileUpload(operation: OpenAPIV3.OperationObject, params: Record<string, any>): Promise<FormData | null> {
@@ -100,6 +132,7 @@ export class HttpClient {
 
   /**
    * Execute an OpenAPI operation
+   * If the operation object is minimal (just method, path, operationId), it will look up the full definition from the spec
    */
   async executeOperation<T = any>(
     operation: OpenAPIV3.OperationObject & { method: string; path: string },
@@ -111,16 +144,30 @@ export class HttpClient {
       throw new Error('Operation ID is required')
     }
 
+    // If the operation is minimal (missing parameters/requestBody), look up the full definition
+    // But preserve the original path and method (path may be pre-interpolated by custom tools)
+    let fullOperation = operation
+    if (!operation.parameters && !operation.requestBody) {
+      const lookedUp = this.getOperationById(operationId)
+      if (lookedUp) {
+        fullOperation = {
+          ...lookedUp,
+          path: operation.path,  // Keep original path (may be interpolated)
+          method: operation.method  // Keep original method
+        }
+      }
+    }
+
     // Handle file uploads if present
-    const formData = await this.prepareFileUpload(operation, params)
+    const formData = await this.prepareFileUpload(fullOperation, params)
 
     // Separate parameters based on their location
     const urlParameters: Record<string, any> = {}
     const bodyParams: Record<string, any> = formData || { ...params }
 
     // Extract path and query parameters based on operation definition
-    if (operation.parameters) {
-      for (const param of operation.parameters) {
+    if (fullOperation.parameters) {
+      for (const param of fullOperation.parameters) {
         if ('name' in param && param.name && param.in) {
           if (param.in === 'path' || param.in === 'query') {
             if (params[param.name] !== undefined) {
@@ -135,7 +182,7 @@ export class HttpClient {
     }
 
     // Add all parameters as url parameters if there is no requestBody defined
-    if (!operation.requestBody && !formData) {
+    if (!fullOperation.requestBody && !formData) {
       for (const key in bodyParams) {
         if (bodyParams[key] !== undefined) {
           urlParameters[key] = bodyParams[key]
