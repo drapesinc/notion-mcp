@@ -1137,7 +1137,7 @@ export const customTools: CustomTool[] = [
       return {
         success: true,
         completed_item: itemFullText,
-        activity_logged: !!activityLogHeadingId,
+        activity_logged: !!activityLogSection,
         date: dateStr,
         log_entry: logEntry
       }
