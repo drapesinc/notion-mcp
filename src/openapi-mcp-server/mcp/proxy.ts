@@ -6,6 +6,16 @@ import { HttpClient, HttpClientError } from '../client/http-client'
 import { OpenAPIV3 } from 'openapi-types'
 import { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { loadToolsetConfig, isApiOperationEnabled, isCustomToolEnabled, describeConfig } from '../../toolset-config'
+import {
+  loadWorkspaceConfig,
+  getWorkspace,
+  getWorkspaceHeaders,
+  isMultiWorkspaceMode,
+  getAvailableWorkspaces,
+  describeWorkspaceConfig,
+  type MultiWorkspaceConfig,
+  type WorkspaceConfig
+} from '../../workspace-config'
 
 type PathItemObject = OpenAPIV3.PathItemObject & {
   get?: OpenAPIV3.OperationObject
@@ -37,25 +47,57 @@ export interface CustomTool {
 // import this class, extend and return server
 export class MCPProxy {
   private server: Server
-  private httpClient: HttpClient
+  private httpClients: Map<string, HttpClient> = new Map()
+  private workspaceConfig: MultiWorkspaceConfig
   private tools: Record<string, NewToolDefinition>
   private openApiLookup: Record<string, OpenAPIV3.OperationObject & { method: string; path: string }>
   private customTools: Map<string, CustomTool> = new Map()
   private toolsetConfig: ReturnType<typeof loadToolsetConfig>
+  private openApiSpec: OpenAPIV3.Document
 
   constructor(name: string, openApiSpec: OpenAPIV3.Document) {
     this.server = new Server({ name, version: '1.0.0' }, { capabilities: { tools: {} } })
+    this.openApiSpec = openApiSpec
+
     const baseUrl = openApiSpec.servers?.[0].url
     if (!baseUrl) {
       throw new Error('No base URL found in OpenAPI spec')
     }
-    this.httpClient = new HttpClient(
-      {
-        baseUrl,
-        headers: this.parseHeadersFromEnv(),
-      },
-      openApiSpec,
-    )
+
+    // Load workspace configuration
+    this.workspaceConfig = loadWorkspaceConfig()
+    console.error(describeWorkspaceConfig(this.workspaceConfig))
+
+    // Create HttpClient for each workspace
+    for (const [workspaceName, workspace] of this.workspaceConfig.workspaces) {
+      const client = new HttpClient(
+        {
+          baseUrl,
+          headers: getWorkspaceHeaders(workspace),
+        },
+        openApiSpec,
+      )
+      this.httpClients.set(workspaceName, client)
+    }
+
+    // Fallback: if no workspaces configured, try legacy env vars
+    if (this.httpClients.size === 0) {
+      const legacyHeaders = this.parseHeadersFromEnv()
+      if (Object.keys(legacyHeaders).length > 0) {
+        const client = new HttpClient({ baseUrl, headers: legacyHeaders }, openApiSpec)
+        this.httpClients.set('default', client)
+        this.workspaceConfig.defaultWorkspace = 'default'
+        this.workspaceConfig.workspaces.set('default', {
+          name: 'default',
+          token: '',
+          envVar: 'OPENAPI_MCP_HEADERS'
+        })
+      }
+    }
+
+    if (this.httpClients.size === 0) {
+      console.error('Warning: No Notion tokens configured. Set NOTION_TOKEN or NOTION_TOKEN_* env vars.')
+    }
 
     // Load toolset configuration
     this.toolsetConfig = loadToolsetConfig()
@@ -70,10 +112,44 @@ export class MCPProxy {
     this.setupHandlers()
   }
 
+  /**
+   * Get HttpClient for a workspace
+   * Falls back to default workspace if not specified
+   */
+  private getHttpClient(workspaceName?: string): HttpClient | null {
+    const workspace = getWorkspace(this.workspaceConfig, workspaceName)
+    if (!workspace) return null
+    return this.httpClients.get(workspace.name) || null
+  }
+
   // Register custom tools
   registerCustomTools(tools: CustomTool[]) {
     for (const tool of tools) {
       this.customTools.set(tool.definition.name, tool)
+    }
+  }
+
+  /**
+   * Add workspace parameter to a tool's input schema when in multi-workspace mode
+   */
+  private addWorkspaceParam(inputSchema: Tool['inputSchema']): Tool['inputSchema'] {
+    if (!isMultiWorkspaceMode(this.workspaceConfig)) {
+      return inputSchema
+    }
+
+    const workspaces = getAvailableWorkspaces(this.workspaceConfig)
+    const defaultWs = this.workspaceConfig.defaultWorkspace
+
+    return {
+      ...inputSchema,
+      properties: {
+        workspace: {
+          type: 'string',
+          description: `Workspace to use. Available: ${workspaces.join(', ')}${defaultWs ? `. Default: ${defaultWs}` : ''}`,
+          enum: workspaces,
+        },
+        ...(inputSchema.properties || {}),
+      },
     }
   }
 
@@ -97,7 +173,7 @@ export class MCPProxy {
           tools.push({
             name: truncatedToolName,
             description: method.description,
-            inputSchema: method.inputSchema as Tool['inputSchema'],
+            inputSchema: this.addWorkspaceParam(method.inputSchema as Tool['inputSchema']),
           })
         })
       })
@@ -105,7 +181,10 @@ export class MCPProxy {
       // Add custom tools (filtered by config)
       for (const [toolName, customTool] of this.customTools) {
         if (isCustomToolEnabled(toolName, this.toolsetConfig)) {
-          tools.push(customTool.definition)
+          tools.push({
+            ...customTool.definition,
+            inputSchema: this.addWorkspaceParam(customTool.definition.inputSchema),
+          })
         }
       }
 
@@ -114,7 +193,28 @@ export class MCPProxy {
 
     // Handle tool calling
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-      const { name, arguments: params } = request.params
+      const { name, arguments: rawParams } = request.params
+
+      // Extract workspace from params and get the correct HttpClient
+      const { workspace, ...params } = (rawParams || {}) as { workspace?: string; [key: string]: unknown }
+      const httpClient = this.getHttpClient(workspace)
+
+      if (!httpClient) {
+        const available = getAvailableWorkspaces(this.workspaceConfig)
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                status: 'error',
+                message: workspace
+                  ? `Workspace '${workspace}' not found. Available: ${available.join(', ')}`
+                  : `No workspace configured. Set NOTION_TOKEN or NOTION_TOKEN_* env vars. Available: ${available.join(', ') || 'none'}`,
+              }),
+            },
+          ],
+        }
+      }
 
       // Check if it's a custom tool first
       const customTool = this.customTools.get(name)
@@ -135,7 +235,7 @@ export class MCPProxy {
         }
 
         try {
-          const result = await customTool.handler(params || {}, this.httpClient)
+          const result = await customTool.handler(params || {}, httpClient)
           return {
             content: [
               {
@@ -183,8 +283,8 @@ export class MCPProxy {
       }
 
       try {
-        // Execute the operation
-        const response = await this.httpClient.executeOperation(operation, params)
+        // Execute the operation using the workspace-specific client
+        const response = await httpClient.executeOperation(operation, params)
 
         // Convert response to MCP format
         return {
