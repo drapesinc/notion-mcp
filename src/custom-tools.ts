@@ -196,6 +196,177 @@ function hasDateMention(richText: any[], dateStr: string): boolean {
   )
 }
 
+// Section configuration for callout-style sections
+interface SectionConfig {
+  icon: { type: 'external'; external: { url: string } }
+  color: string
+  aliases: string[] // Alternative names/variations to match
+}
+
+const SECTION_CONFIGS: Record<string, SectionConfig> = {
+  'to do': {
+    icon: { type: 'external', external: { url: 'https://www.notion.so/icons/checkmark-square_blue.svg' } },
+    color: 'blue_background',
+    aliases: ['todo', 'to-do', 'to do', 'todos', 'checklist', 'tasks']
+  },
+  'activity log': {
+    icon: { type: 'external', external: { url: 'https://www.notion.so/icons/timeline_gray.svg' } },
+    color: 'gray_background',
+    aliases: ['activity log', 'activitylog', 'activity-log', 'log', 'history', 'updates']
+  }
+}
+
+/**
+ * Normalize text for matching: lowercase, remove punctuation, collapse whitespace
+ */
+function normalizeText(text: string): string {
+  return text.toLowerCase()
+    .replace(/[-_]/g, ' ')  // Replace hyphens/underscores with spaces
+    .replace(/[^\w\s]/g, '') // Remove other punctuation
+    .replace(/\s+/g, ' ')    // Collapse whitespace
+    .trim()
+}
+
+/**
+ * Check if text matches a section name or any of its aliases
+ */
+function matchesSectionName(text: string, sectionName: string): boolean {
+  const normalizedText = normalizeText(text)
+  const normalizedSection = normalizeText(sectionName)
+
+  // Direct match
+  if (normalizedText.includes(normalizedSection)) {
+    return true
+  }
+
+  // Check aliases
+  const config = SECTION_CONFIGS[sectionName.toLowerCase()]
+  if (config?.aliases) {
+    for (const alias of config.aliases) {
+      if (normalizedText.includes(normalizeText(alias))) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+/**
+ * Get text content from any block type that might be a section header
+ */
+function getBlockText(block: any): string | null {
+  const type = block.type
+  switch (type) {
+    case 'callout':
+      return richTextToPlain(block.callout?.rich_text || [])
+    case 'heading_1':
+      return richTextToPlain(block.heading_1?.rich_text || [])
+    case 'heading_2':
+      return richTextToPlain(block.heading_2?.rich_text || [])
+    case 'heading_3':
+      return richTextToPlain(block.heading_3?.rich_text || [])
+    case 'toggle':
+      return richTextToPlain(block.toggle?.rich_text || [])
+    case 'paragraph':
+      // Check if paragraph has bold formatting (sometimes used as headers)
+      const richText = block.paragraph?.rich_text || []
+      if (richText.length > 0 && richText[0]?.annotations?.bold) {
+        return richTextToPlain(richText)
+      }
+      return null
+    default:
+      return null
+  }
+}
+
+/**
+ * Find a section block by name (checks callout, heading, and toggle blocks)
+ * Handles variations like "To Do", "ToDo", "To-Do", "Checklist", etc.
+ * Returns the block and its index, or null if not found
+ */
+function findSectionBlock(blocks: any[], sectionName: string): { block: any; index: number } | null {
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i]
+    const text = getBlockText(block)
+
+    if (text && matchesSectionName(text, sectionName)) {
+      return { block, index: i }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Create a callout block for a section header
+ */
+function createSectionCallout(sectionName: string, children?: any[]): any {
+  const config = SECTION_CONFIGS[sectionName.toLowerCase()] || {
+    icon: { type: 'external', external: { url: 'https://www.notion.so/icons/document_gray.svg' } },
+    color: 'gray_background'
+  }
+
+  const callout: any = {
+    type: 'callout',
+    callout: {
+      rich_text: [{ type: 'text', text: { content: sectionName }, annotations: { bold: true } }],
+      icon: config.icon,
+      color: config.color
+    }
+  }
+
+  if (children && children.length > 0) {
+    callout.callout.children = children
+  }
+
+  return callout
+}
+
+/**
+ * Check if a block is a section header (heading, callout with bold text, or bold paragraph)
+ */
+function isSectionHeader(block: any): boolean {
+  const type = block.type
+
+  // Headings are always section headers
+  if (type === 'heading_1' || type === 'heading_2' || type === 'heading_3') {
+    return true
+  }
+
+  // Callouts with bold text are section headers
+  if (type === 'callout') {
+    const richText = block.callout?.rich_text || []
+    return richText.some((rt: any) => rt.annotations?.bold)
+  }
+
+  // Bold paragraphs can be section headers
+  if (type === 'paragraph') {
+    const richText = block.paragraph?.rich_text || []
+    return richText.length > 0 && richText[0]?.annotations?.bold
+  }
+
+  return false
+}
+
+/**
+ * Find blocks belonging to a section (between section header and next section header)
+ */
+function getSectionBlocks(blocks: any[], sectionIndex: number): any[] {
+  const sectionBlocks: any[] = []
+
+  for (let i = sectionIndex + 1; i < blocks.length; i++) {
+    const block = blocks[i]
+    // Stop at next section header
+    if (isSectionHeader(block)) {
+      break
+    }
+    sectionBlocks.push(block)
+  }
+
+  return sectionBlocks
+}
+
 // Summarize block structure
 function summarizeBlocks(blocks: any[]): string[] {
   const summary: string[] = []
@@ -656,12 +827,12 @@ export const customTools: CustomTool[] = [
       // Add initial checklist items if provided
       if (initial_checklist && initial_checklist.length > 0) {
         const checklistBlocks = [
-          { type: 'heading_2', heading_2: { rich_text: textToRichText('To Do') } },
+          createSectionCallout('To Do'),
           ...initial_checklist.map((item: string) => ({
             type: 'to_do',
             to_do: { rich_text: textToRichText(item), checked: false }
           })),
-          { type: 'heading_2', heading_2: { rich_text: textToRichText('Activity Log') } }
+          createSectionCallout('Activity Log')
         ]
 
         await httpClient.executeOperation(
@@ -727,30 +898,17 @@ export const customTools: CustomTool[] = [
 
       const blocks = blocksResponse.data.results || []
 
-      // Find Activity Log heading
-      let activityLogHeadingId: string | null = null
-      let activityLogHeadingIndex = -1
-
-      for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i]
-        if (block.type === 'heading_2' || block.type === 'heading_1') {
-          const text = richTextToPlain(block[block.type]?.rich_text || [])
-          if (text.toLowerCase().includes('activity log')) {
-            activityLogHeadingId = block.id
-            activityLogHeadingIndex = i
-            break
-          }
-        }
-      }
+      // Find Activity Log section (callout or heading)
+      const activityLogSection = findSectionBlock(blocks, 'Activity Log')
 
       // If no Activity Log section, create one with a date toggle
-      if (!activityLogHeadingId) {
+      if (!activityLogSection) {
         const createSectionResponse = await httpClient.executeOperation(
           { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
           {
             block_id: page_id,
             children: [
-              { type: 'heading_2', heading_2: { rich_text: textToRichText('Activity Log') } },
+              createSectionCallout('Activity Log'),
               {
                 type: 'toggle',
                 toggle: {
@@ -774,15 +932,11 @@ export const customTools: CustomTool[] = [
         }
       }
 
-      // Look for toggles after the Activity Log heading to find today's date toggle
+      // Get blocks in the Activity Log section to find today's date toggle
+      const sectionBlocks = getSectionBlocks(blocks, activityLogSection.index)
       let todayToggleId: string | null = null
 
-      for (let i = activityLogHeadingIndex + 1; i < blocks.length; i++) {
-        const block = blocks[i]
-        // Stop if we hit another heading (end of Activity Log section)
-        if (block.type === 'heading_1' || block.type === 'heading_2' || block.type === 'heading_3') {
-          break
-        }
+      for (const block of sectionBlocks) {
         if (block.type === 'toggle') {
           const toggleRichText = block.toggle?.rich_text || []
           // Check for date mention or plain text match
@@ -815,12 +969,12 @@ export const customTools: CustomTool[] = [
         }
       }
 
-      // Create a new toggle for today's date after the Activity Log heading
+      // Create a new toggle for today's date after the Activity Log section header
       const createToggleResponse = await httpClient.executeOperation(
         { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
         {
           block_id: page_id,
-          after: activityLogHeadingId,
+          after: activityLogSection.block.id,
           children: [
             {
               type: 'toggle',
@@ -884,27 +1038,21 @@ export const customTools: CustomTool[] = [
 
       const blocks = blocksResponse.data.results || []
 
-      // Find the to_do block matching the text and Activity Log heading
+      // Find the to_do block matching the text
       let targetBlock: any = null
-      let activityLogHeadingId: string | null = null
-      let activityLogHeadingIndex = -1
 
-      for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i]
+      for (const block of blocks) {
         if (block.type === 'to_do') {
           const text = richTextToPlain(block.to_do?.rich_text || [])
           if (text.toLowerCase().includes(item_text.toLowerCase())) {
             targetBlock = block
-          }
-        }
-        if (block.type === 'heading_2' || block.type === 'heading_1') {
-          const text = richTextToPlain(block[block.type]?.rich_text || [])
-          if (text.toLowerCase().includes('activity log')) {
-            activityLogHeadingId = block.id
-            activityLogHeadingIndex = i
+            break
           }
         }
       }
+
+      // Find Activity Log section (callout or heading)
+      const activityLogSection = findSectionBlock(blocks, 'Activity Log')
 
       if (!targetBlock) {
         return {
@@ -936,15 +1084,12 @@ export const customTools: CustomTool[] = [
         : `${timeStr} — ✓ ${itemFullText}`
 
       // Add to activity log with date toggle
-      if (activityLogHeadingId) {
-        // Look for today's date toggle
+      if (activityLogSection) {
+        // Get blocks in the Activity Log section to find today's date toggle
+        const sectionBlocks = getSectionBlocks(blocks, activityLogSection.index)
         let todayToggleId: string | null = null
 
-        for (let i = activityLogHeadingIndex + 1; i < blocks.length; i++) {
-          const block = blocks[i]
-          if (block.type === 'heading_1' || block.type === 'heading_2' || block.type === 'heading_3') {
-            break
-          }
+        for (const block of sectionBlocks) {
           if (block.type === 'toggle') {
             const toggleRichText = block.toggle?.rich_text || []
             // Check for date mention or plain text match
@@ -967,12 +1112,12 @@ export const customTools: CustomTool[] = [
             }
           )
         } else {
-          // Create new toggle for today
+          // Create new toggle for today after the section header
           await httpClient.executeOperation(
             { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
             {
               block_id: page_id,
-              after: activityLogHeadingId,
+              after: activityLogSection.block.id,
               children: [
                 {
                   type: 'toggle',
