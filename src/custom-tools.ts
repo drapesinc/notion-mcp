@@ -27,16 +27,56 @@ interface RichTextSegment {
   annotations?: RichTextAnnotations
 }
 
+// Notion mention rich text types
+interface PageMention {
+  type: 'mention'
+  mention: {
+    type: 'page'
+    page: { id: string }
+  }
+}
+
+interface DatabaseMention {
+  type: 'mention'
+  mention: {
+    type: 'database'
+    database: { id: string }
+  }
+}
+
+interface UserMention {
+  type: 'mention'
+  mention: {
+    type: 'user'
+    user: { id: string }
+  }
+}
+
+type RichTextItem = RichTextSegment | PageMention | DatabaseMention | UserMention
+
 /**
  * Parse text with markdown-like formatting into Notion rich_text array
- * Supports: **bold**, *italic*, ~~strikethrough~~, `code`, [link](url)
+ * Supports:
+ * - **bold**, *italic*, ~~strikethrough~~, `code`, [link](url)
+ * - @page[Title](page_id) - page mention
+ * - @page[Title](page_id#block_id) - page link with block anchor
+ * - @db[Title](database_id) - database mention
+ * - @user[Name](user_id) - user mention
  */
-function textToRichText(content: string): RichTextSegment[] {
-  const segments: RichTextSegment[] = []
+function textToRichText(content: string): any[] {
+  const segments: any[] = []
 
   // Regex patterns for inline formatting
-  // Process in order: links first, then other formatting
+  // Process mentions first, then links, then other formatting
   const patterns = [
+    // Page mention with block anchor: @page[Title](page_id#block_id) - creates a link
+    { pattern: /@page\[([^\]]+)\]\(([^)#]+)#([^)]+)\)/g, type: 'page_anchor' },
+    // Page mention: @page[Title](page_id)
+    { pattern: /@page\[([^\]]+)\]\(([^)]+)\)/g, type: 'page' },
+    // Database mention: @db[Title](database_id)
+    { pattern: /@db\[([^\]]+)\]\(([^)]+)\)/g, type: 'database' },
+    // User mention: @user[Name](user_id)
+    { pattern: /@user\[([^\]]+)\]\(([^)]+)\)/g, type: 'user' },
     // Links: [text](url)
     { pattern: /\[([^\]]+)\]\(([^)]+)\)/g, type: 'link' },
     // Bold: **text**
@@ -56,6 +96,9 @@ function textToRichText(content: string): RichTextSegment[] {
     content: string
     annotations: RichTextAnnotations
     link?: string
+    mentionType?: 'page' | 'database' | 'user'
+    mentionId?: string
+    blockAnchor?: string
   }
 
   const spans: Span[] = []
@@ -74,19 +117,45 @@ function textToRichText(content: string): RichTextSegment[] {
 
       const annotations: RichTextAnnotations = {}
       let link: string | undefined
+      let mentionType: 'page' | 'database' | 'user' | undefined
+      let mentionId: string | undefined
+      let blockAnchor: string | undefined
 
-      if (type === 'bold') annotations.bold = true
-      if (type === 'italic') annotations.italic = true
-      if (type === 'strikethrough') annotations.strikethrough = true
-      if (type === 'code') annotations.code = true
-      if (type === 'link') link = match[2]
+      switch (type) {
+        case 'bold': annotations.bold = true; break
+        case 'italic': annotations.italic = true; break
+        case 'strikethrough': annotations.strikethrough = true; break
+        case 'code': annotations.code = true; break
+        case 'link': link = match[2]; break
+        case 'page':
+          mentionType = 'page'
+          mentionId = match[2]
+          break
+        case 'page_anchor':
+          // Page with block anchor - use Notion URL format as link
+          mentionType = 'page'
+          mentionId = match[2]
+          blockAnchor = match[3]
+          break
+        case 'database':
+          mentionType = 'database'
+          mentionId = match[2]
+          break
+        case 'user':
+          mentionType = 'user'
+          mentionId = match[2]
+          break
+      }
 
       spans.push({
         start,
         end,
         content: innerContent,
         annotations,
-        link
+        link,
+        mentionType,
+        mentionId,
+        blockAnchor
       })
     }
   }
@@ -119,21 +188,49 @@ function textToRichText(content: string): RichTextSegment[] {
       }
     }
 
-    // Add the formatted span
-    const segment: RichTextSegment = {
-      type: 'text',
-      text: { content: span.content }
-    }
+    // Add the formatted span - either mention or text
+    if (span.mentionType && span.mentionId) {
+      // Handle mentions
+      if (span.blockAnchor) {
+        // Page with block anchor - create a link to the page#block
+        const notionUrl = `https://www.notion.so/${span.mentionId.replace(/-/g, '')}#${span.blockAnchor.replace(/-/g, '')}`
+        segments.push({
+          type: 'text',
+          text: { content: span.content, link: { url: notionUrl } }
+        })
+      } else if (span.mentionType === 'page') {
+        segments.push({
+          type: 'mention',
+          mention: { type: 'page', page: { id: span.mentionId } }
+        })
+      } else if (span.mentionType === 'database') {
+        segments.push({
+          type: 'mention',
+          mention: { type: 'database', database: { id: span.mentionId } }
+        })
+      } else if (span.mentionType === 'user') {
+        segments.push({
+          type: 'mention',
+          mention: { type: 'user', user: { id: span.mentionId } }
+        })
+      }
+    } else {
+      // Regular text segment
+      const segment: RichTextSegment = {
+        type: 'text',
+        text: { content: span.content }
+      }
 
-    if (Object.keys(span.annotations).length > 0) {
-      segment.annotations = span.annotations
-    }
+      if (Object.keys(span.annotations).length > 0) {
+        segment.annotations = span.annotations
+      }
 
-    if (span.link) {
-      segment.text.link = { url: span.link }
-    }
+      if (span.link) {
+        segment.text.link = { url: span.link }
+      }
 
-    segments.push(segment)
+      segments.push(segment)
+    }
     currentPos = span.end
   }
 
@@ -527,7 +624,7 @@ export const customTools: CustomTool[] = [
   {
     definition: {
       name: 'append-structured-content',
-      description: 'Append structured content to a Notion page using simple syntax. Supports headings (h1:, h2:, h3:), bullets (- ), numbered lists (1. ), todos ([] or [x]), quotes (> ), dividers (---), and paragraphs. Also supports inline formatting: **bold**, *italic*, ~~strikethrough~~, `code`, and [links](url).',
+      description: 'Append structured content to a Notion page using simple syntax. Supports headings (h1:, h2:, h3:), bullets (- ), numbered lists (1. ), todos ([] or [x]), quotes (> ), dividers (---), and paragraphs. Also supports inline formatting: **bold**, *italic*, ~~strikethrough~~, `code`, [links](url). Notion mentions: @page[Title](page_id), @page[Title](page_id#block_id) for block anchors, @db[Title](database_id), @user[Name](user_id).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -537,7 +634,7 @@ export const customTools: CustomTool[] = [
           },
           content: {
             type: 'string',
-            description: 'Content in simple markup format. Each line becomes a block. Use h1:, h2:, h3: for headings, - for bullets, 1. for numbered, [] for unchecked todo, [x] for checked todo, > for quotes, --- for dividers. Inline formatting: **bold**, *italic*, ~~strikethrough~~, `code`, [link](url).'
+            description: 'Content in simple markup format. Each line becomes a block. Use h1:, h2:, h3: for headings, - for bullets, 1. for numbered, [] for unchecked todo, [x] for checked todo, > for quotes, --- for dividers. Inline formatting: **bold**, *italic*, ~~strikethrough~~, `code`, [link](url). Mentions: @page[Title](id), @page[Title](id#block), @db[Title](id), @user[Name](id).'
           },
           after: {
             type: 'string',
@@ -1140,6 +1237,677 @@ export const customTools: CustomTool[] = [
         activity_logged: !!activityLogSection,
         date: dateStr,
         log_entry: logEntry
+      }
+    }
+  },
+  {
+    definition: {
+      name: 'get-due-tasks',
+      description: 'Get tasks due on or before today from a Tasks database. Returns tasks with their checklist items and recent activity log entries. Use the workspace parameter to select which workspace to query.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          include_details: {
+            type: 'boolean',
+            description: 'Whether to fetch page content (checklist + activity log) for each task (default: true)',
+            default: true
+          },
+          days_ahead: {
+            type: 'number',
+            description: 'Include tasks due within N days from today (default: 0 = today and overdue only)',
+            default: 0
+          }
+        }
+      }
+    },
+    handler: async (params, httpClient) => {
+      const { include_details = true, days_ahead = 0 } = params
+
+      // Hardcoded database IDs for each workspace's Tasks database
+      // The workspace is determined by the MCP proxy based on the workspace param
+      const TASKS_DATABASES: Record<string, string> = {
+        personal: '135b4417f9cb81929222c4b7d8ecb65e',
+        fourall: '590ee2e8b2764def84f2655cc8eee4f3',
+        drapes: '5fef57349a23472691506eb16dbb46db'
+      }
+
+      // Calculate the due date cutoff
+      const today = new Date()
+      today.setDate(today.getDate() + days_ahead)
+      const dueDateCutoff = today.toISOString().split('T')[0]
+
+      const allTasks: any[] = []
+      let workspaceName = 'unknown'
+
+      // Try each database ID to find which one works with this httpClient
+      // (The httpClient is already configured for a specific workspace by the MCP proxy)
+      for (const [ws, dbId] of Object.entries(TASKS_DATABASES)) {
+        try {
+          // Query the Tasks database with filters
+          const queryResponse = await httpClient.executeOperation(
+            { method: 'post', path: '/v1/databases/{database_id}/query', operationId: 'post-database-query' },
+            {
+              database_id: dbId,
+              filter: {
+                and: [
+                  {
+                    property: 'Due',
+                    date: { on_or_before: dueDateCutoff }
+                  },
+                  {
+                    property: 'Status',
+                    status: { does_not_equal: 'Done' }
+                  },
+                  {
+                    property: 'Status',
+                    status: { does_not_equal: "Don't Do" }
+                  },
+                  {
+                    property: 'Status',
+                    status: { does_not_equal: 'Archived' }
+                  }
+                ]
+              },
+              sorts: [
+                { property: 'Due', direction: 'ascending' }
+              ],
+              page_size: 50
+            }
+          )
+
+          // Successfully queried this workspace
+          workspaceName = ws
+          const tasks = queryResponse.data.results || []
+
+          for (const task of tasks) {
+            // Extract properties
+            const properties: Record<string, any> = {}
+            let title = ''
+
+            for (const [name, prop] of Object.entries(task.properties || {})) {
+              const p = prop as any
+              switch (p.type) {
+                case 'title':
+                  title = richTextToPlain(p.title)
+                  properties[name] = title
+                  break
+                case 'status':
+                  properties[name] = p.status?.name || null
+                  break
+                case 'date':
+                  properties[name] = p.date?.start || null
+                  break
+                case 'select':
+                  properties[name] = p.select?.name || null
+                  break
+                case 'people':
+                  properties[name] = p.people?.map((person: any) => person.name || person.id) || []
+                  break
+                case 'relation':
+                  properties[name] = p.relation?.length || 0
+                  break
+                case 'rich_text':
+                  properties[name] = richTextToPlain(p.rich_text)
+                  break
+                case 'checkbox':
+                  properties[name] = p.checkbox
+                  break
+              }
+            }
+
+            const taskData: any = {
+              id: task.id,
+              workspace: ws,
+              title,
+              url: task.url,
+              status: properties['Status'],
+              due: properties['Due'],
+              priority: properties['Priority'],
+              assignee: properties['Assignee'],
+              do_next: properties['Do Next'] || properties['Smart List'],
+              project_count: properties['Project']
+            }
+
+            // Fetch page content if requested
+            if (include_details) {
+              try {
+                const blocksResponse = await httpClient.executeOperation(
+                  { method: 'get', path: '/v1/blocks/{block_id}/children', operationId: 'get-block-children' },
+                  { block_id: task.id, page_size: 50 }
+                )
+
+                const blocks = blocksResponse.data.results || []
+                const checklist: any[] = []
+                const activityLog: any[] = []
+                let inActivityLog = false
+
+                for (const block of blocks) {
+                  // Detect Activity Log section
+                  const blockText = getBlockText(block)
+                  if (blockText && matchesSectionName(blockText, 'Activity Log')) {
+                    inActivityLog = true
+                    continue
+                  }
+
+                  // Collect to_do items (checklist)
+                  if (block.type === 'to_do') {
+                    const text = richTextToPlain(block.to_do?.rich_text || [])
+                    checklist.push({
+                      text,
+                      checked: block.to_do?.checked || false
+                    })
+                  }
+
+                  // Collect activity log entries (toggles with dates)
+                  if (inActivityLog && block.type === 'toggle') {
+                    const toggleText = richTextToPlain(block.toggle?.rich_text || [])
+                    activityLog.push(toggleText)
+                    // Only get last 3 activity entries
+                    if (activityLog.length >= 3) break
+                  }
+                }
+
+                taskData.checklist = checklist
+                taskData.activity_log = activityLog
+                taskData.checklist_progress = `${checklist.filter(c => c.checked).length}/${checklist.length}`
+
+              } catch (blockError: any) {
+                taskData.checklist = []
+                taskData.activity_log = []
+                taskData.details_error = blockError.message || 'Failed to fetch blocks'
+              }
+            }
+
+            allTasks.push(taskData)
+          }
+
+          // Found the right workspace, stop trying others
+          break
+        } catch {
+          // This database ID doesn't work with this token, try next
+          continue
+        }
+      }
+
+      // Calculate summary
+      const todayStr = new Date().toISOString().split('T')[0]
+      const overdue = allTasks.filter(t => t.due && t.due < todayStr).length
+      const dueToday = allTasks.filter(t => t.due === todayStr).length
+      const upcoming = allTasks.filter(t => t.due && t.due > todayStr).length
+
+      return {
+        workspace: workspaceName,
+        date_queried: todayStr,
+        days_ahead,
+        total_tasks: allTasks.length,
+        summary: {
+          overdue,
+          due_today: dueToday,
+          upcoming
+        },
+        tasks: allTasks
+      }
+    }
+  },
+  {
+    definition: {
+      name: 'delete-blocks',
+      description: 'Delete blocks from a Notion page. Can delete by block IDs, by section name (deletes section and its content), or clear all content.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          page_id: {
+            type: 'string',
+            description: 'The ID of the page to delete blocks from'
+          },
+          block_ids: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Specific block IDs to delete'
+          },
+          section_name: {
+            type: 'string',
+            description: 'Delete a section by name (e.g., "Management Team"). Deletes the section header and all content until the next section.'
+          },
+          clear_all: {
+            type: 'boolean',
+            description: 'Delete ALL blocks from the page (use with caution)',
+            default: false
+          }
+        },
+        required: ['page_id']
+      }
+    },
+    handler: async (params, httpClient) => {
+      const { page_id, block_ids, section_name, clear_all = false } = params
+
+      // Get all blocks from the page
+      const blocksResponse = await httpClient.executeOperation(
+        { method: 'get', path: '/v1/blocks/{block_id}/children', operationId: 'get-block-children' },
+        { block_id: page_id, page_size: 100 }
+      )
+
+      const blocks = blocksResponse.data.results || []
+      let blocksToDelete: string[] = []
+
+      if (clear_all) {
+        // Delete all blocks
+        blocksToDelete = blocks.map((b: any) => b.id)
+      } else if (block_ids && block_ids.length > 0) {
+        // Delete specific blocks
+        blocksToDelete = block_ids
+      } else if (section_name) {
+        // Find section and delete it plus content until next section
+        let inSection = false
+        let sectionFound = false
+
+        for (const block of blocks) {
+          const text = getBlockText(block)
+
+          // Check if this is the section we're looking for
+          if (text && matchesSectionName(text, section_name)) {
+            inSection = true
+            sectionFound = true
+            blocksToDelete.push(block.id)
+            continue
+          }
+
+          // Check if we've hit the next section
+          if (inSection && isSectionHeader(block)) {
+            break // Stop at next section
+          }
+
+          // Add blocks within the section
+          if (inSection) {
+            blocksToDelete.push(block.id)
+          }
+        }
+
+        if (!sectionFound) {
+          return {
+            success: false,
+            error: `Section "${section_name}" not found on page`
+          }
+        }
+      } else {
+        return {
+          success: false,
+          error: 'Must specify block_ids, section_name, or clear_all=true'
+        }
+      }
+
+      // Delete the blocks
+      const deleted: string[] = []
+      const errors: string[] = []
+
+      for (const blockId of blocksToDelete) {
+        try {
+          await httpClient.executeOperation(
+            { method: 'delete', path: '/v1/blocks/{block_id}', operationId: 'delete-a-block' },
+            { block_id: blockId }
+          )
+          deleted.push(blockId)
+        } catch (e: any) {
+          errors.push(`${blockId}: ${e.message || 'Failed to delete'}`)
+        }
+      }
+
+      return {
+        success: errors.length === 0,
+        deleted_count: deleted.length,
+        deleted_block_ids: deleted,
+        errors: errors.length > 0 ? errors : undefined
+      }
+    }
+  },
+  {
+    definition: {
+      name: 'update-block',
+      description: 'Update the content of a single block. Supports text blocks (paragraph, headings, lists, todos, quotes).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          block_id: {
+            type: 'string',
+            description: 'The ID of the block to update'
+          },
+          content: {
+            type: 'string',
+            description: 'New text content for the block. Supports inline formatting: **bold**, *italic*, ~~strikethrough~~, `code`, [link](url). Mentions: @page[Title](id), @db[Title](id), @user[Name](id).'
+          },
+          checked: {
+            type: 'boolean',
+            description: 'For to_do blocks: whether the item is checked'
+          }
+        },
+        required: ['block_id', 'content']
+      }
+    },
+    handler: async (params, httpClient) => {
+      const { block_id, content, checked } = params
+
+      // First, get the block to determine its type
+      const blockResponse = await httpClient.executeOperation(
+        { method: 'get', path: '/v1/blocks/{block_id}', operationId: 'retrieve-a-block' },
+        { block_id }
+      )
+
+      const block = blockResponse.data
+      const blockType = block.type
+
+      // Build update payload based on block type
+      const updatePayload: any = { block_id }
+      const richText = textToRichText(content)
+
+      switch (blockType) {
+        case 'paragraph':
+          updatePayload.paragraph = { rich_text: richText }
+          break
+        case 'heading_1':
+          updatePayload.heading_1 = { rich_text: richText }
+          break
+        case 'heading_2':
+          updatePayload.heading_2 = { rich_text: richText }
+          break
+        case 'heading_3':
+          updatePayload.heading_3 = { rich_text: richText }
+          break
+        case 'bulleted_list_item':
+          updatePayload.bulleted_list_item = { rich_text: richText }
+          break
+        case 'numbered_list_item':
+          updatePayload.numbered_list_item = { rich_text: richText }
+          break
+        case 'to_do':
+          updatePayload.to_do = { rich_text: richText }
+          if (typeof checked === 'boolean') {
+            updatePayload.to_do.checked = checked
+          }
+          break
+        case 'quote':
+          updatePayload.quote = { rich_text: richText }
+          break
+        case 'callout':
+          updatePayload.callout = { rich_text: richText }
+          break
+        case 'toggle':
+          updatePayload.toggle = { rich_text: richText }
+          break
+        default:
+          return {
+            success: false,
+            error: `Block type "${blockType}" is not supported for content updates`
+          }
+      }
+
+      // Update the block
+      const response = await httpClient.executeOperation(
+        { method: 'patch', path: '/v1/blocks/{block_id}', operationId: 'update-a-block' },
+        updatePayload
+      )
+
+      return {
+        success: true,
+        block_id: response.data.id,
+        block_type: blockType,
+        updated_content: content
+      }
+    }
+  },
+  {
+    definition: {
+      name: 'replace-page-section',
+      description: 'Replace a section of a Notion page with new content. Finds the section by name, deletes it and its content, then inserts new structured content in its place.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          page_id: {
+            type: 'string',
+            description: 'The ID of the page to modify'
+          },
+          section_name: {
+            type: 'string',
+            description: 'Name of the section to replace (e.g., "Management Team")'
+          },
+          new_content: {
+            type: 'string',
+            description: 'New content in simple markup format. Use h1:, h2:, h3: for headings, - for bullets, 1. for numbered, [] for todos, > for quotes, --- for dividers. Inline formatting: **bold**, *italic*, [link](url).'
+          },
+          insert_after_block_id: {
+            type: 'string',
+            description: 'Optional: Insert after this specific block ID instead of finding by section name'
+          }
+        },
+        required: ['page_id', 'new_content']
+      }
+    },
+    handler: async (params, httpClient) => {
+      const { page_id, section_name, new_content, insert_after_block_id } = params
+
+      // Get all blocks from the page
+      const blocksResponse = await httpClient.executeOperation(
+        { method: 'get', path: '/v1/blocks/{block_id}/children', operationId: 'get-block-children' },
+        { block_id: page_id, page_size: 100 }
+      )
+
+      const blocks = blocksResponse.data.results || []
+      let insertAfterId: string | null = insert_after_block_id || null
+      const blocksToDelete: string[] = []
+
+      if (section_name && !insert_after_block_id) {
+        // Find the section
+        let inSection = false
+        let sectionFound = false
+        let previousBlockId: string | null = null
+
+        for (let i = 0; i < blocks.length; i++) {
+          const block = blocks[i]
+          const text = getBlockText(block)
+
+          // Check if this is the section we're looking for
+          if (text && matchesSectionName(text, section_name)) {
+            inSection = true
+            sectionFound = true
+            insertAfterId = previousBlockId // Insert after the block BEFORE this section
+            blocksToDelete.push(block.id)
+            continue
+          }
+
+          // Check if we've hit the next section
+          if (inSection && isSectionHeader(block)) {
+            break // Stop at next section
+          }
+
+          // Add blocks within the section to delete
+          if (inSection) {
+            blocksToDelete.push(block.id)
+          }
+
+          previousBlockId = block.id
+        }
+
+        if (!sectionFound) {
+          return {
+            success: false,
+            error: `Section "${section_name}" not found on page`
+          }
+        }
+      }
+
+      // Delete the old section blocks
+      const deleted: string[] = []
+      for (const blockId of blocksToDelete) {
+        try {
+          await httpClient.executeOperation(
+            { method: 'delete', path: '/v1/blocks/{block_id}', operationId: 'delete-a-block' },
+            { block_id: blockId }
+          )
+          deleted.push(blockId)
+        } catch (e) {
+          // Continue even if some deletions fail
+        }
+      }
+
+      // Parse and insert new content
+      const lines = new_content.split('\n')
+      const children: any[] = []
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+
+        let block: any = null
+
+        if (trimmed === '---') {
+          block = { type: 'divider', divider: {} }
+        } else if (trimmed.startsWith('h1:')) {
+          block = {
+            type: 'heading_1',
+            heading_1: { rich_text: textToRichText(trimmed.substring(3).trim()) }
+          }
+        } else if (trimmed.startsWith('h2:')) {
+          block = {
+            type: 'heading_2',
+            heading_2: { rich_text: textToRichText(trimmed.substring(3).trim()) }
+          }
+        } else if (trimmed.startsWith('h3:')) {
+          block = {
+            type: 'heading_3',
+            heading_3: { rich_text: textToRichText(trimmed.substring(3).trim()) }
+          }
+        } else if (trimmed.startsWith('- ')) {
+          block = {
+            type: 'bulleted_list_item',
+            bulleted_list_item: { rich_text: textToRichText(trimmed.substring(2)) }
+          }
+        } else if (/^\d+\.\s/.test(trimmed)) {
+          block = {
+            type: 'numbered_list_item',
+            numbered_list_item: { rich_text: textToRichText(trimmed.replace(/^\d+\.\s/, '')) }
+          }
+        } else if (trimmed.startsWith('[x] ') || trimmed.startsWith('[X] ')) {
+          block = {
+            type: 'to_do',
+            to_do: { rich_text: textToRichText(trimmed.substring(4)), checked: true }
+          }
+        } else if (trimmed.startsWith('[] ')) {
+          block = {
+            type: 'to_do',
+            to_do: { rich_text: textToRichText(trimmed.substring(3)), checked: false }
+          }
+        } else if (trimmed.startsWith('> ')) {
+          block = {
+            type: 'quote',
+            quote: { rich_text: textToRichText(trimmed.substring(2)) }
+          }
+        } else {
+          block = {
+            type: 'paragraph',
+            paragraph: { rich_text: textToRichText(trimmed) }
+          }
+        }
+
+        if (block) children.push(block)
+      }
+
+      if (children.length === 0) {
+        return {
+          success: false,
+          error: 'No content to insert',
+          deleted_count: deleted.length
+        }
+      }
+
+      // Insert new content
+      const insertPayload: any = { block_id: page_id, children }
+      if (insertAfterId) {
+        insertPayload.after = insertAfterId
+      }
+
+      const response = await httpClient.executeOperation(
+        { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
+        insertPayload
+      )
+
+      return {
+        success: true,
+        deleted_count: deleted.length,
+        inserted_count: children.length,
+        inserted_block_ids: response.data.results?.map((r: any) => r.id)
+      }
+    }
+  },
+  {
+    definition: {
+      name: 'get-toolset-info',
+      description: 'Get information about available Notion MCP toolsets and how to enable them. Shows current configuration and lists tools that could be enabled with different settings.',
+      inputSchema: {
+        type: 'object',
+        properties: {},
+        required: []
+      }
+    },
+    handler: async () => {
+      // Import toolset config dynamically to get current state
+      const toolsetDefinitions = {
+        core: {
+          description: 'Basic CRUD operations - pages, databases, search, reading blocks',
+          tools: ['get-page-full', 'search-and-summarize', 'API-post-search', 'API-retrieve-a-page', 'API-patch-page', 'API-post-page', 'API-retrieve-a-database', 'API-post-database-query', 'API-get-block-children']
+        },
+        blocks: {
+          description: 'Block writing - append all types of content blocks',
+          tools: ['append-structured-content', 'API-patch-block-children']
+        },
+        workflow: {
+          description: 'Workflow automation - task creation, activity logging, checklists, due tasks, page editing',
+          tools: ['create-task-with-project', 'add-activity-log', 'complete-checklist-item', 'get-due-tasks', 'delete-blocks', 'update-block', 'replace-page-section']
+        },
+        media: {
+          description: 'Media operations - images, videos, files, embeds, bookmarks',
+          tools: ['add-media-block', 'add-bookmark', 'add-embed']
+        },
+        advanced: {
+          description: 'Advanced blocks - tables, columns, equations, table of contents',
+          tools: ['create-table', 'add-equation', 'add-columns']
+        },
+        comments: {
+          description: 'Comments API - read and create comments',
+          tools: ['API-retrieve-a-comment', 'API-create-a-comment']
+        },
+        users: {
+          description: 'Users API - list and retrieve users',
+          tools: ['API-get-users', 'API-get-user', 'API-get-self']
+        }
+      }
+
+      const modes = {
+        full: ['core', 'blocks', 'workflow', 'media', 'advanced', 'comments', 'users'],
+        standard: ['core', 'blocks', 'workflow'],
+        minimal: ['core'],
+        custom: 'Set NOTION_TOOLSETS env var with comma-separated toolset names'
+      }
+
+      const currentMode = process.env.NOTION_TOOLSET_MODE || 'standard'
+      const currentToolsets = currentMode === 'custom'
+        ? (process.env.NOTION_TOOLSETS || 'core').split(',').map(s => s.trim())
+        : modes[currentMode as keyof typeof modes] || modes.standard
+
+      return {
+        current_mode: currentMode,
+        current_toolsets: currentToolsets,
+        available_modes: Object.keys(modes),
+        toolset_definitions: toolsetDefinitions,
+        configuration_help: {
+          description: 'To change toolset configuration, update the MCP server environment variables',
+          env_vars: {
+            NOTION_TOOLSET_MODE: 'Set to "full", "standard", "minimal", or "custom"',
+            NOTION_TOOLSETS: 'When mode is "custom", comma-separated list of toolsets to enable (e.g., "core,blocks,workflow,media")'
+          },
+          examples: {
+            full_mode: { NOTION_TOOLSET_MODE: 'full' },
+            custom_mode: { NOTION_TOOLSET_MODE: 'custom', NOTION_TOOLSETS: 'core,blocks,workflow,comments' }
+          }
+        }
       }
     }
   }
