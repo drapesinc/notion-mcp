@@ -82,12 +82,16 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
     ]
   },
   workflow: {
-    description: 'Workflow automation - task creation, activity logging, checklists',
+    description: 'Workflow automation - task creation, activity logging, checklists, due tasks, page editing',
     apiOperations: [],
     customTools: [
       'create-task-with-project',
       'add-activity-log',
       'complete-checklist-item',
+      'get-due-tasks',
+      'delete-blocks',
+      'update-block',
+      'replace-page-section',
     ]
   },
   media: {
