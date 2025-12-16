@@ -464,9 +464,10 @@ function getSectionBlocks(blocks: any[], sectionIndex: number): any[] {
   return sectionBlocks
 }
 
-// Summarize block structure
-function summarizeBlocks(blocks: any[]): string[] {
+// Summarize block structure with nested children
+function summarizeBlocks(blocks: any[], indent: number = 0): string[] {
   const summary: string[] = []
+  const prefix = '  '.repeat(indent)
   for (const block of blocks) {
     const type = block.type
     let text = ''
@@ -474,9 +475,43 @@ function summarizeBlocks(blocks: any[]): string[] {
       text = richTextToPlain(block[type].rich_text)
     }
     const preview = text.length > 50 ? text.substring(0, 50) + '...' : text
-    summary.push(`${type}${preview ? ': ' + preview : ''}`)
+    const childIndicator = block.children?.length ? ` [${block.children.length} children]` : ''
+    summary.push(`${prefix}${type}${preview ? ': ' + preview : ''}${childIndicator}`)
+
+    // Recursively summarize children
+    if (block.children?.length) {
+      summary.push(...summarizeBlocks(block.children, indent + 1))
+    }
   }
   return summary
+}
+
+// Recursively fetch children for blocks that have has_children: true
+async function fetchBlockChildren(
+  blocks: any[],
+  httpClient: any,
+  maxDepth: number = 3,
+  currentDepth: number = 0
+): Promise<any[]> {
+  if (currentDepth >= maxDepth) return blocks
+
+  for (const block of blocks) {
+    if (block.has_children) {
+      try {
+        const childrenResponse = await httpClient.executeOperation(
+          { method: 'get', path: '/v1/blocks/{block_id}/children', operationId: 'get-block-children' },
+          { block_id: block.id, page_size: 100 }
+        )
+        const children = childrenResponse.data.results || []
+        // Recursively fetch children of children
+        block.children = await fetchBlockChildren(children, httpClient, maxDepth, currentDepth + 1)
+      } catch (e) {
+        // If we can't fetch children, just continue
+        block.children = []
+      }
+    }
+  }
+  return blocks
 }
 
 export const customTools: CustomTool[] = [
@@ -500,13 +535,23 @@ export const customTools: CustomTool[] = [
             type: 'number',
             description: 'Maximum number of blocks to retrieve (default: 50)',
             default: 50
+          },
+          expand_toggles: {
+            type: 'boolean',
+            description: 'Whether to recursively fetch children of toggle/callout blocks (default: false)',
+            default: false
+          },
+          max_depth: {
+            type: 'number',
+            description: 'Maximum depth for nested block expansion when expand_toggles is true (default: 3)',
+            default: 3
           }
         },
         required: ['page_id']
       }
     },
     handler: async (params, httpClient) => {
-      const { page_id, include_blocks = true, block_limit = 50 } = params
+      const { page_id, include_blocks = true, block_limit = 50, expand_toggles = false, max_depth = 3 } = params
 
       // 1. Get the page
       const pageResponse = await httpClient.executeOperation(
@@ -581,6 +626,12 @@ export const customTools: CustomTool[] = [
             { block_id: page_id, page_size: block_limit }
           )
           blocks = blocksResponse.data.results || []
+
+          // Optionally expand nested toggle/callout content
+          if (expand_toggles) {
+            blocks = await fetchBlockChildren(blocks, httpClient, max_depth, 0)
+          }
+
           blockSummary = summarizeBlocks(blocks)
         } catch (e) {
           blockSummary = ['[Error fetching blocks]']

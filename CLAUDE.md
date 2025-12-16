@@ -37,7 +37,7 @@ Beyond the standard Notion API operations:
 
 | Tool | Description |
 |------|-------------|
-| `get-page-full` | Get page with properties, blocks, and linked database summaries |
+| `get-page-full` | Get page with properties, blocks, and linked database summaries. Use `expand_toggles: true` to fetch nested toggle/callout content. |
 | `search-and-summarize` | Search Notion with summarized results |
 | `append-structured-content` | Add content using markdown-like syntax |
 | `create-task-with-project` | Create task linked to project with initial checklist |
