@@ -46,6 +46,7 @@ Beyond the standard Notion API operations:
 | `get-due-tasks` | Fetch tasks due today or earlier from Tasks database |
 | `delete-blocks` | Delete blocks by ID, section name, or clear all |
 | `update-block` | Update a single block's text content |
+| `update-page` | Update any page properties with relation append/remove support |
 | `replace-page-section` | Replace a section with new structured content |
 
 ## Section Handling
@@ -127,6 +128,41 @@ Delete blocks from a Notion page:
 ### update-block
 Update a single block's text content. Supports inline formatting:
 `**bold**`, `*italic*`, `~~strikethrough~~`, `` `code` ``, `[link](url)`
+
+### update-page
+Update any database page properties with relation append/remove support. Solves the Notion API limitation where relations must be replaced entirely.
+
+**Parameters:**
+- `page_id` (required): The page to update
+- `relations` (optional): Relation updates with mode support
+- `properties` (optional): Standard property updates
+- `workspace` (optional): Target workspace
+
+**Relation Modes:**
+| Mode | Behavior |
+|------|----------|
+| `append` | Add to existing relations (default keeps existing) |
+| `remove` | Remove specified IDs from existing relations |
+| `replace` | Replace entire relation array (default) |
+
+**Example:**
+```json
+{
+  "page_id": "abc123",
+  "relations": {
+    "Projects": {"ids": ["project-id-1"], "mode": "append"},
+    "Areas": {"ids": ["area-id-1", "area-id-2"], "mode": "replace"}
+  },
+  "properties": {
+    "Status": {"status": {"name": "In Progress"}}
+  }
+}
+```
+
+**How it works:**
+1. Fetches current page to get existing relation values
+2. Applies the specified mode (append/remove/replace)
+3. Sends single PATCH request with computed relation array
 
 ## Notion Mentions
 
