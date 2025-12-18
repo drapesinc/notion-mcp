@@ -48,8 +48,6 @@ Beyond the standard Notion API operations:
 | `update-block` | Update a single block's text content |
 | `update-page` | Update any page properties with relation append/remove support |
 | `replace-page-section` | Replace a section with new structured content |
-| `list-database-templates` | List available templates for a database |
-| `create-page-from-template` | Create a page using a database template |
 
 ## Section Handling
 
@@ -207,46 +205,32 @@ h2: Subheading
 
 Create pages using database templates. Requires Notion API version `2025-09-03` or later.
 
-### list-database-templates
-List available templates for a database.
+### API-list-templates
+List available templates for a database (raw API tool).
 
 **Parameters:**
-- `database_id` (required): The database ID to list templates for
+- `data_source_id` (required): The database ID
 - `name` (optional): Filter templates by name
 - `page_size` (optional): Number of results (1-100)
 
-**Returns:**
-```json
-{
-  "templates": [
-    { "id": "uuid", "name": "Template Name", "is_default": true }
-  ],
-  "has_more": false
-}
-```
+### Using Templates with create-task-with-project
 
-### create-page-from-template
-Create a new page using a template.
+The `create-task-with-project` tool supports a `template_id` parameter:
 
-**Parameters:**
-- `database_id` (required): The database to create the page in
-- `template_id` (required): Template ID from list-database-templates, or `"default"` for default template
-- `title` (required): Title for the new page
-- `properties` (optional): Additional properties to set
-
-**Example:**
 ```json
 {
   "database_id": "590ee2e8b2764def84f2655cc8eee4f3",
-  "template_id": "default",
   "title": "New Task from Template",
-  "properties": {
-    "Status": { "status": { "name": "To Do" } }
-  }
+  "template_id": "default"
 }
 ```
 
-**Note:** Template content is applied asynchronously. The page may appear blank momentarily until processing completes.
+**Template ID values:**
+- `"default"` - Use the database's default template
+- `"none"` - Create without template
+- `"<template-uuid>"` - Specific template ID from `API-list-templates`
+
+**Note:** When using templates, `initial_checklist` is ignored. Template content is applied asynchronously.
 
 ## Toolset Configuration
 
