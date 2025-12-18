@@ -55,17 +55,17 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
   core: {
     description: 'Basic CRUD operations - pages, databases, search, reading blocks',
     apiOperations: [
-      'API-post-search',
-      'API-retrieve-a-page',
-      'API-patch-page',
-      'API-post-page',
-      'API-retrieve-a-database',
-      'API-post-database-query',
-      'API-get-block-children',
-      'API-retrieve-a-block',
-      'API-delete-a-block',
-      'API-update-a-block',
-      'API-retrieve-a-page-property',
+      'post-search',
+      'retrieve-a-page',
+      'patch-page',
+      'post-page',
+      'retrieve-a-database',
+      'post-database-query',
+      'get-block-children',
+      'retrieve-a-block',
+      'delete-a-block',
+      'update-a-block',
+      'retrieve-a-page-property',
     ],
     customTools: [
       'get-page-full',
@@ -76,7 +76,7 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
   blocks: {
     description: 'Block writing - append all types of content blocks',
     apiOperations: [
-      'API-patch-block-children',
+      'patch-block-children',
     ],
     customTools: [
       'append-structured-content',
@@ -116,17 +116,17 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
   comments: {
     description: 'Comments API - read and create comments',
     apiOperations: [
-      'API-retrieve-a-comment',
-      'API-create-a-comment',
+      'retrieve-a-comment',
+      'create-a-comment',
     ],
     customTools: []
   },
   users: {
     description: 'Users API - list and retrieve users',
     apiOperations: [
-      'API-get-users',
-      'API-get-user',
-      'API-get-self',
+      'get-users',
+      'get-user',
+      'get-self',
     ],
     customTools: []
   }
