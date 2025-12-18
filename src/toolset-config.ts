@@ -92,6 +92,7 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
       'get-due-tasks',
       'delete-blocks',
       'update-block',
+      'update-page',
       'replace-page-section',
     ]
   },

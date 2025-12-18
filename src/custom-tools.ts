@@ -1968,6 +1968,99 @@ export const customTools: CustomTool[] = [
   },
   {
     definition: {
+      name: 'update-page',
+      description: 'Update any page properties with relation append/remove support. Handles the read-modify-write pattern for relations automatically.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          page_id: {
+            type: 'string',
+            description: 'The ID of the page to update'
+          },
+          relations: {
+            type: 'object',
+            description: 'Relation updates. Keys are property names, values are objects with ids (array of page IDs) and optional mode (append/remove/replace)',
+            additionalProperties: {
+              type: 'object',
+              properties: {
+                ids: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: 'Page IDs to add, remove, or set'
+                },
+                mode: {
+                  type: 'string',
+                  enum: ['append', 'remove', 'replace'],
+                  description: 'How to handle the relation (default: replace)'
+                }
+              },
+              required: ['ids']
+            }
+          },
+          properties: {
+            type: 'object',
+            description: 'Other properties to update (status, text, etc). Standard Notion property format.',
+            additionalProperties: true
+          }
+        },
+        required: ['page_id']
+      }
+    },
+    handler: async (params, httpClient) => {
+      const { page_id, relations, properties = {} } = params
+
+      // Build final properties object
+      const finalProperties: any = { ...properties }
+
+      // Handle relation updates with append/remove support
+      if (relations && Object.keys(relations).length > 0) {
+        // Fetch current page to get existing relations
+        const pageResponse = await httpClient.executeOperation(
+          { method: 'get', path: '/v1/pages/{page_id}', operationId: 'retrieve-a-page' },
+          { page_id }
+        )
+        const pageData = pageResponse.data
+
+        for (const [propName, config] of Object.entries(relations) as [string, { ids: string[], mode?: string }][]) {
+          const mode = config.mode || 'replace'
+          const newIds = config.ids || []
+
+          // Get existing relation IDs
+          const existingProp = pageData.properties?.[propName]
+          const existingIds: string[] = existingProp?.relation?.map((r: any) => r.id) || []
+
+          let finalIds: string[]
+
+          if (mode === 'append') {
+            finalIds = [...new Set([...existingIds, ...newIds])]
+          } else if (mode === 'remove') {
+            finalIds = existingIds.filter(id => !newIds.includes(id))
+          } else {
+            finalIds = newIds
+          }
+
+          finalProperties[propName] = {
+            relation: finalIds.map(id => ({ id }))
+          }
+        }
+      }
+
+      // Update the page
+      const updateResponse = await httpClient.executeOperation(
+        { method: 'patch', path: '/v1/pages/{page_id}', operationId: 'patch-page' },
+        { page_id, properties: finalProperties }
+      )
+
+      return {
+        success: true,
+        page_id: updateResponse.data.id,
+        url: updateResponse.data.url,
+        updated_properties: Object.keys(finalProperties)
+      }
+    }
+  },
+  {
+    definition: {
       name: 'get-toolset-info',
       description: 'Get information about available Notion MCP toolsets and how to enable them. Shows current configuration and lists tools that could be enabled with different settings.',
       inputSchema: {
