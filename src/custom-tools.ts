@@ -853,30 +853,40 @@ export const customTools: CustomTool[] = [
   {
     definition: {
       name: 'create-task-with-project',
-      description: 'Create a new task in a Tasks database and immediately link it to a project. Sets up the task with title, status, and project relation.',
+      description: 'Create or update a task in a Tasks database. Supports relation append/remove without replacing entire array. Use page_id to update existing task.',
       inputSchema: {
         type: 'object',
         properties: {
           database_id: {
             type: 'string',
-            description: 'The ID of the Tasks database to create the task in'
+            description: 'The ID of the Tasks database (required for new tasks, optional for updates)'
+          },
+          page_id: {
+            type: 'string',
+            description: 'ID of existing task to update. If omitted, creates new task.'
           },
           title: {
             type: 'string',
-            description: 'Title of the task'
+            description: 'Title of the task (required for new tasks)'
           },
           project_id: {
             type: 'string',
-            description: 'ID of the project to link to (optional)'
+            description: 'ID of the project to link to'
           },
           project_property_name: {
             type: 'string',
             description: 'Name of the relation property for Project (default: "Project")',
             default: 'Project'
           },
+          relation_mode: {
+            type: 'string',
+            enum: ['replace', 'append', 'remove'],
+            description: 'How to handle relations: replace (default), append (add to existing), remove (remove from existing)',
+            default: 'replace'
+          },
           status: {
             type: 'string',
-            description: 'Initial status for the task (e.g., "To Do", "In Progress")'
+            description: 'Status for the task (e.g., "To Do", "In Progress")'
           },
           status_property_name: {
             type: 'string',
@@ -905,18 +915,20 @@ export const customTools: CustomTool[] = [
           initial_checklist: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Initial checklist items to add to the task page'
+            description: 'Initial checklist items to add to the task page (only for new tasks)'
           }
         },
-        required: ['database_id', 'title']
+        required: []
       }
     },
     handler: async (params, httpClient) => {
       const {
         database_id,
+        page_id,
         title,
         project_id,
         project_property_name = 'Project',
+        relation_mode = 'replace',
         status,
         status_property_name = 'Status',
         do_next,
@@ -926,17 +938,57 @@ export const customTools: CustomTool[] = [
         initial_checklist
       } = params
 
-      // Build properties object
-      const properties: any = {
-        title: {
-          title: textToRichText(title)
+      const isUpdate = !!page_id
+
+      // For updates with append/remove mode, fetch existing relations first
+      let existingProjectIds: string[] = []
+      let existingAreaIds: string[] = []
+
+      if (isUpdate && relation_mode !== 'replace') {
+        const pageResponse = await httpClient.executeOperation(
+          { method: 'get', path: '/v1/pages/{page_id}', operationId: 'retrieve-a-page' },
+          { page_id }
+        )
+        const pageData = pageResponse.data
+
+        // Extract existing relation IDs
+        const projectProp = pageData.properties?.[project_property_name]
+        if (projectProp?.relation) {
+          existingProjectIds = projectProp.relation.map((r: any) => r.id)
+        }
+
+        const areaProp = pageData.properties?.[area_property_name]
+        if (areaProp?.relation) {
+          existingAreaIds = areaProp.relation.map((r: any) => r.id)
         }
       }
 
-      // Add project relation if provided
+      // Build properties object
+      const properties: any = {}
+
+      // Add title (required for new, optional for update)
+      if (title) {
+        properties.title = {
+          title: textToRichText(title)
+        }
+      } else if (!isUpdate) {
+        return { success: false, error: 'Title is required for new tasks' }
+      }
+
+      // Handle project relation with append/remove support
       if (project_id) {
+        let finalProjectIds: string[]
+
+        if (relation_mode === 'append') {
+          finalProjectIds = [...new Set([...existingProjectIds, project_id])]
+        } else if (relation_mode === 'remove') {
+          finalProjectIds = existingProjectIds.filter(id => id !== project_id)
+        } else {
+          finalProjectIds = [project_id]
+        }
+
         properties[project_property_name] = {
-          relation: [{ id: project_id }]
+          relation: finalProjectIds.map(id => ({ id }))
         }
       }
 
@@ -954,43 +1006,69 @@ export const customTools: CustomTool[] = [
         }
       }
 
-      // Add areas if provided
+      // Handle areas with append/remove support
       if (area_ids && area_ids.length > 0) {
+        let finalAreaIds: string[]
+
+        if (relation_mode === 'append') {
+          finalAreaIds = [...new Set([...existingAreaIds, ...area_ids])]
+        } else if (relation_mode === 'remove') {
+          finalAreaIds = existingAreaIds.filter(id => !area_ids.includes(id))
+        } else {
+          finalAreaIds = area_ids
+        }
+
         properties[area_property_name] = {
-          relation: area_ids.map((id: string) => ({ id }))
+          relation: finalAreaIds.map((id: string) => ({ id }))
         }
       }
 
-      // Create the page
-      const createResponse = await httpClient.executeOperation(
-        { method: 'post', path: '/v1/pages', operationId: 'post-page' },
-        {
-          parent: { database_id },
-          properties
-        }
-      )
+      let page: any
 
-      const page = createResponse.data
-
-      // Add initial checklist items if provided
-      if (initial_checklist && initial_checklist.length > 0) {
-        const checklistBlocks = [
-          createSectionCallout('To Do'),
-          ...initial_checklist.map((item: string) => ({
-            type: 'to_do',
-            to_do: { rich_text: textToRichText(item), checked: false }
-          })),
-          createSectionCallout('Activity Log')
-        ]
-
-        await httpClient.executeOperation(
-          { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
-          { block_id: page.id, children: checklistBlocks }
+      if (isUpdate) {
+        // Update existing page
+        const updateResponse = await httpClient.executeOperation(
+          { method: 'patch', path: '/v1/pages/{page_id}', operationId: 'patch-page' },
+          { page_id, properties }
         )
+        page = updateResponse.data
+      } else {
+        // Create new page
+        if (!database_id) {
+          return { success: false, error: 'database_id is required for new tasks' }
+        }
+
+        const createResponse = await httpClient.executeOperation(
+          { method: 'post', path: '/v1/pages', operationId: 'post-page' },
+          {
+            parent: { database_id },
+            properties
+          }
+        )
+        page = createResponse.data
+
+        // Add initial checklist items if provided (only for new tasks)
+        if (initial_checklist && initial_checklist.length > 0) {
+          const checklistBlocks = [
+            createSectionCallout('To Do'),
+            ...initial_checklist.map((item: string) => ({
+              type: 'to_do',
+              to_do: { rich_text: textToRichText(item), checked: false }
+            })),
+            createSectionCallout('Activity Log')
+          ]
+
+          await httpClient.executeOperation(
+            { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
+            { block_id: page.id, children: checklistBlocks }
+          )
+        }
       }
 
       return {
         success: true,
+        mode: isUpdate ? 'updated' : 'created',
+        relation_mode: relation_mode,
         task_id: page.id,
         url: page.url,
         title,
