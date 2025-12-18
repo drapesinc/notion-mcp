@@ -2061,6 +2061,80 @@
         "security": []
       }
     },
+    "/v1/data_sources/{data_source_id}/templates": {
+      "get": {
+        "summary": "List database templates",
+        "description": "List available templates for a database. Requires Notion API version 2025-09-03 or later.",
+        "operationId": "list-templates",
+        "parameters": [
+          {
+            "name": "data_source_id",
+            "in": "path",
+            "required": true,
+            "description": "The database ID (data source ID) to list templates for",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "Filter templates by name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "Number of templates to return (1-100)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            }
+          },
+          {
+            "name": "start_cursor",
+            "in": "query",
+            "description": "Pagination cursor from previous response",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of templates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "templates": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "name": { "type": "string" },
+                          "is_default": { "type": "boolean" }
+                        }
+                      }
+                    },
+                    "has_more": { "type": "boolean" },
+                    "next_cursor": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "deprecated": false,
+        "security": []
+      }
+    },
     "/v1/databases": {
       "post": {
         "summary": "Create a database",

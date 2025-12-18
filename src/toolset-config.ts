@@ -98,12 +98,11 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
     ]
   },
   templates: {
-    description: 'Template operations - list database templates and create pages from templates (requires Notion API 2025-09-03+)',
-    apiOperations: [],
-    customTools: [
-      'list-database-templates',
-      'create-page-from-template',
-    ]
+    description: 'Template operations - list database templates (requires Notion API 2025-09-03+)',
+    apiOperations: [
+      'list-templates',
+    ],
+    customTools: []
   },
   media: {
     description: 'Media operations - images, videos, files, embeds, bookmarks',
