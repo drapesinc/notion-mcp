@@ -70,6 +70,7 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
     customTools: [
       'get-page-full',
       'search-and-summarize',
+      'get-toolset-info',
     ]
   },
   blocks: {
