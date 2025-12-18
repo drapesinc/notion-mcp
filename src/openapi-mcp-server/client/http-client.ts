@@ -235,4 +235,87 @@ export class HttpClient {
       throw error
     }
   }
+
+  /**
+   * Make a raw HTTP request without needing an OpenAPI operation definition.
+   * Useful for calling endpoints not in the OpenAPI spec.
+   */
+  async rawRequest<T = any>(
+    method: 'get' | 'post' | 'put' | 'patch' | 'delete',
+    path: string,
+    params: Record<string, any> = {},
+    options: { headers?: Record<string, string> } = {}
+  ): Promise<HttpClientResponse<T>> {
+    const api = await this.api
+
+    try {
+      let response
+      const config = {
+        headers: {
+          'Content-Type': 'application/json',
+          ...options.headers
+        }
+      }
+
+      // Interpolate path parameters
+      let interpolatedPath = path
+      const pathParams: string[] = []
+      path.replace(/\{(\w+)\}/g, (_, param) => {
+        pathParams.push(param)
+        return ''
+      })
+      for (const param of pathParams) {
+        if (params[param] !== undefined) {
+          interpolatedPath = interpolatedPath.replace(`{${param}}`, encodeURIComponent(String(params[param])))
+        }
+      }
+
+      // Separate query params from body params
+      const bodyParams = { ...params }
+      for (const param of pathParams) {
+        delete bodyParams[param]
+      }
+
+      if (method === 'get' || method === 'delete') {
+        response = await api.request({
+          method,
+          url: interpolatedPath,
+          params: bodyParams,
+          ...config
+        })
+      } else {
+        response = await api.request({
+          method,
+          url: interpolatedPath,
+          data: bodyParams,
+          ...config
+        })
+      }
+
+      const responseHeaders = new Headers()
+      Object.entries(response.headers).forEach(([key, value]) => {
+        if (value) responseHeaders.append(key, value.toString())
+      })
+
+      return {
+        data: response.data,
+        status: response.status,
+        headers: responseHeaders,
+      }
+    } catch (error: any) {
+      if (error.response) {
+        const headers = new Headers()
+        Object.entries(error.response.headers).forEach(([key, value]) => {
+          if (value) headers.append(key, value.toString())
+        })
+        throw new HttpClientError(
+          error.response.statusText || 'Request failed',
+          error.response.status,
+          error.response.data,
+          headers
+        )
+      }
+      throw error
+    }
+  }
 }

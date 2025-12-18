@@ -48,6 +48,8 @@ Beyond the standard Notion API operations:
 | `update-block` | Update a single block's text content |
 | `update-page` | Update any page properties with relation append/remove support |
 | `replace-page-section` | Replace a section with new structured content |
+| `list-database-templates` | List available templates for a database |
+| `create-page-from-template` | Create a page using a database template |
 
 ## Section Handling
 
@@ -201,9 +203,54 @@ h2: Subheading
 --- Divider
 ```
 
+## Database Templates
+
+Create pages using database templates. Requires Notion API version `2025-09-03` or later.
+
+### list-database-templates
+List available templates for a database.
+
+**Parameters:**
+- `database_id` (required): The database ID to list templates for
+- `name` (optional): Filter templates by name
+- `page_size` (optional): Number of results (1-100)
+
+**Returns:**
+```json
+{
+  "templates": [
+    { "id": "uuid", "name": "Template Name", "is_default": true }
+  ],
+  "has_more": false
+}
+```
+
+### create-page-from-template
+Create a new page using a template.
+
+**Parameters:**
+- `database_id` (required): The database to create the page in
+- `template_id` (required): Template ID from list-database-templates, or `"default"` for default template
+- `title` (required): Title for the new page
+- `properties` (optional): Additional properties to set
+
+**Example:**
+```json
+{
+  "database_id": "REDACTED_DB_ID_FOURALL",
+  "template_id": "default",
+  "title": "New Task from Template",
+  "properties": {
+    "Status": { "status": { "name": "To Do" } }
+  }
+}
+```
+
+**Note:** Template content is applied asynchronously. The page may appear blank momentarily until processing completes.
+
 ## Toolset Configuration
 
-The workflow tools are in the `workflow` toolset. Ensure it's enabled:
+The workflow tools are in the `workflow` toolset. Template tools are in the `templates` toolset (included in `full` mode). Ensure they're enabled:
 ```bash
 NOTION_TOOLSET_MODE=standard  # Includes workflow by default
 # Or explicitly:
