@@ -1903,11 +1903,11 @@ export const customTools: CustomTool[] = [
       const toolsetDefinitions = {
         core: {
           description: 'Basic CRUD operations - pages, databases, search, reading blocks',
-          tools: ['get-page-full', 'search-and-summarize', 'API-post-search', 'API-retrieve-a-page', 'API-patch-page', 'API-post-page', 'API-retrieve-a-database', 'API-post-database-query', 'API-get-block-children']
+          tools: ['get-page-full', 'search-and-summarize', 'get-toolset-info', 'post-search', 'retrieve-a-page', 'patch-page', 'post-page', 'retrieve-a-database', 'post-database-query', 'get-block-children']
         },
         blocks: {
           description: 'Block writing - append all types of content blocks',
-          tools: ['append-structured-content', 'API-patch-block-children']
+          tools: ['append-structured-content', 'patch-block-children']
         },
         workflow: {
           description: 'Workflow automation - task creation, activity logging, checklists, due tasks, page editing',
@@ -1923,11 +1923,11 @@ export const customTools: CustomTool[] = [
         },
         comments: {
           description: 'Comments API - read and create comments',
-          tools: ['API-retrieve-a-comment', 'API-create-a-comment']
+          tools: ['retrieve-a-comment', 'create-a-comment']
         },
         users: {
           description: 'Users API - list and retrieve users',
-          tools: ['API-get-users', 'API-get-user', 'API-get-self']
+          tools: ['get-users', 'get-user', 'get-self']
         }
       }
 
