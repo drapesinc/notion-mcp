@@ -39,6 +39,7 @@ export type ToolsetName =
   | 'core'      // Basic CRUD: pages, databases, search, blocks read
   | 'blocks'    // Block writing: all block types for appending content
   | 'workflow'  // Custom workflow tools: create-task, activity-log, etc.
+  | 'templates' // Template operations: list and create pages from templates
   | 'media'     // Media blocks: image, video, file, pdf, embed, bookmark
   | 'advanced'  // Advanced blocks: tables, columns, equations, TOC
   | 'comments'  // Comments API
@@ -96,6 +97,14 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
       'replace-page-section',
     ]
   },
+  templates: {
+    description: 'Template operations - list database templates and create pages from templates (requires Notion API 2025-09-03+)',
+    apiOperations: [],
+    customTools: [
+      'list-database-templates',
+      'create-page-from-template',
+    ]
+  },
   media: {
     description: 'Media operations - images, videos, files, embeds, bookmarks',
     apiOperations: [],
@@ -135,7 +144,7 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
 
 // Predefined mode configurations
 export const MODE_TOOLSETS: Record<ToolsetMode, ToolsetName[]> = {
-  full: ['core', 'blocks', 'workflow', 'media', 'advanced', 'comments', 'users'],
+  full: ['core', 'blocks', 'workflow', 'templates', 'media', 'advanced', 'comments', 'users'],
   standard: ['core', 'blocks', 'workflow'],
   minimal: ['core'],
   custom: [] // Determined by NOTION_TOOLSETS env var

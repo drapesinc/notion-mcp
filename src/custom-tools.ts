@@ -2132,5 +2132,147 @@ export const customTools: CustomTool[] = [
         }
       }
     }
+  },
+
+  // Template tools - requires Notion API version 2025-09-03+
+  {
+    definition: {
+      name: 'list-database-templates',
+      description: 'List available templates for a database. Templates can be used when creating new pages to apply predefined content and structure. Note: Requires Notion API version 2025-09-03 or later.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          database_id: {
+            type: 'string',
+            description: 'The ID of the database to list templates for (also called data_source_id)'
+          },
+          name: {
+            type: 'string',
+            description: 'Optional filter to search templates by name'
+          },
+          page_size: {
+            type: 'number',
+            description: 'Number of templates to return (1-100, default 100)'
+          }
+        },
+        required: ['database_id']
+      }
+    },
+    handler: async (params, httpClient) => {
+      const { database_id, name, page_size } = params
+
+      try {
+        // Build query parameters
+        const queryParams: Record<string, any> = {}
+        if (name) queryParams.name = name
+        if (page_size) queryParams.page_size = page_size
+
+        const response = await httpClient.rawRequest(
+          'get',
+          `/v1/data_sources/${database_id}/templates`,
+          queryParams,
+          { headers: { 'Notion-Version': '2025-09-03' } }
+        )
+
+        return {
+          templates: response.data.templates || [],
+          has_more: response.data.has_more || false,
+          next_cursor: response.data.next_cursor || null
+        }
+      } catch (error: any) {
+        // If the API returns an error, it might be because templates aren't available
+        // or the API version doesn't support this endpoint yet
+        if (error.status === 400 || error.status === 404) {
+          return {
+            status: 'error',
+            message: 'Templates endpoint not available. This requires Notion API version 2025-09-03 or later, which may not be available yet.',
+            error_details: error.data
+          }
+        }
+        throw error
+      }
+    }
+  },
+
+  {
+    definition: {
+      name: 'create-page-from-template',
+      description: 'Create a new page in a database using a template. The template defines the initial content and structure. Note: Requires Notion API version 2025-09-03 or later.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          database_id: {
+            type: 'string',
+            description: 'The ID of the database to create the page in'
+          },
+          template_id: {
+            type: 'string',
+            description: 'The ID of the template to use. Get template IDs from list-database-templates. Use "default" to use the database\'s default template.'
+          },
+          title: {
+            type: 'string',
+            description: 'Title for the new page'
+          },
+          properties: {
+            type: 'object',
+            description: 'Additional properties to set on the page (optional)',
+            additionalProperties: true
+          }
+        },
+        required: ['database_id', 'template_id', 'title']
+      }
+    },
+    handler: async (params, httpClient) => {
+      const { database_id, template_id, title, properties = {} } = params
+
+      try {
+        // Build the request body
+        const body: Record<string, any> = {
+          parent: {
+            type: 'data_source_id',
+            data_source_id: database_id
+          },
+          properties: {
+            ...properties,
+            title: [{ text: { content: title } }]
+          }
+        }
+
+        // Set template configuration
+        if (template_id === 'default') {
+          body.template = { type: 'default' }
+        } else if (template_id === 'none') {
+          body.template = { type: 'none' }
+        } else {
+          body.template = {
+            type: 'template_id',
+            template_id: template_id
+          }
+        }
+
+        const response = await httpClient.rawRequest(
+          'post',
+          '/v1/pages',
+          body,
+          { headers: { 'Notion-Version': '2025-09-03' } }
+        )
+
+        return {
+          success: true,
+          page_id: response.data.id,
+          url: response.data.url,
+          note: 'Template content is applied asynchronously. The page may appear blank momentarily until processing completes.'
+        }
+      } catch (error: any) {
+        if (error.status === 400) {
+          return {
+            status: 'error',
+            message: 'Failed to create page from template. This may be due to API version requirements or invalid template ID.',
+            error_details: error.data
+          }
+        }
+        throw error
+      }
+    }
   }
 ]
