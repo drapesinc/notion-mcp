@@ -1,0 +1,268 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import {
+  loadWorkspaceConfig,
+  getWorkspaceHeaders,
+  describeWorkspaceConfig,
+  type MultiWorkspaceConfig,
+} from '../workspace-config'
+
+describe('Workspace Configuration', () => {
+  let originalEnv: NodeJS.ProcessEnv
+
+  beforeEach(() => {
+    originalEnv = { ...process.env }
+  })
+
+  afterEach(() => {
+    process.env = originalEnv
+  })
+
+  describe('loadWorkspaceConfig', () => {
+    it('should load multiple workspaces from env vars', () => {
+      process.env.NOTION_TOKEN_PERSONAL = 'token-personal'
+      process.env.NOTION_TOKEN_FOURALL = 'token-fourall'
+      process.env.NOTION_TOKEN_DRAPES = 'token-drapes'
+      process.env.NOTION_DEFAULT_WORKSPACE = 'personal'
+
+      const config = loadWorkspaceConfig()
+
+      expect(config.workspaces.size).toBe(3)
+      expect(config.workspaces.has('personal')).toBe(true)
+      expect(config.workspaces.has('fourall')).toBe(true)
+      expect(config.workspaces.has('drapes')).toBe(true)
+      expect(config.defaultWorkspace).toBe('personal')
+    })
+
+    it('should use first workspace as default if not specified', () => {
+      process.env.NOTION_TOKEN_ALPHA = 'token-alpha'
+      process.env.NOTION_TOKEN_BETA = 'token-beta'
+
+      const config = loadWorkspaceConfig()
+
+      expect(config.workspaces.size).toBe(2)
+      // Default should be one of the workspaces (order may vary)
+      expect(['alpha', 'beta']).toContain(config.defaultWorkspace)
+    })
+
+    it('should fallback to legacy NOTION_TOKEN', () => {
+      process.env.NOTION_TOKEN = 'legacy-token'
+
+      const config = loadWorkspaceConfig()
+
+      expect(config.workspaces.size).toBe(1)
+      expect(config.workspaces.has('default')).toBe(true)
+      expect(config.defaultWorkspace).toBe('default')
+    })
+
+    it('should return empty config when no tokens found', () => {
+      // Clear all token env vars
+      delete process.env.NOTION_TOKEN
+      Object.keys(process.env).forEach((key) => {
+        if (key.startsWith('NOTION_TOKEN_')) {
+          delete process.env[key]
+        }
+      })
+
+      const config = loadWorkspaceConfig()
+
+      expect(config.workspaces.size).toBe(0)
+      expect(config.defaultWorkspace).toBe('')
+    })
+
+    it('should normalize workspace names to lowercase', () => {
+      process.env.NOTION_TOKEN_PERSONAL = 'token-1'
+      process.env.NOTION_TOKEN_FOURALL = 'token-2'
+
+      const config = loadWorkspaceConfig()
+
+      expect(config.workspaces.has('personal')).toBe(true)
+      expect(config.workspaces.has('fourall')).toBe(true)
+      expect(config.workspaces.has('PERSONAL')).toBe(false)
+      expect(config.workspaces.has('FOURALL')).toBe(false)
+    })
+
+    it('should handle mixed case in default workspace', () => {
+      process.env.NOTION_TOKEN_PERSONAL = 'token-1'
+      process.env.NOTION_DEFAULT_WORKSPACE = 'PERSONAL'
+
+      const config = loadWorkspaceConfig()
+
+      expect(config.defaultWorkspace).toBe('personal')
+    })
+  })
+
+  describe('getWorkspaceHeaders', () => {
+    it('should generate correct headers for a workspace', () => {
+      const workspace = {
+        name: 'personal',
+        token: 'test-token-123',
+      }
+
+      const headers = getWorkspaceHeaders(workspace)
+
+      expect(headers['Authorization']).toBe('Bearer test-token-123')
+      expect(headers['Notion-Version']).toBe('2025-09-03')
+    })
+
+    it('should use latest API version', () => {
+      const workspace = {
+        name: 'test',
+        token: 'token',
+      }
+
+      const headers = getWorkspaceHeaders(workspace)
+
+      // Verify we're using the latest API version
+      expect(headers['Notion-Version']).toBe('2025-09-03')
+    })
+  })
+
+  describe('describeWorkspaceConfig', () => {
+    it('should describe single workspace config', () => {
+      const config: MultiWorkspaceConfig = {
+        workspaces: new Map([['personal', { name: 'personal', token: 'token-1' }]]),
+        defaultWorkspace: 'personal',
+      }
+
+      const description = describeWorkspaceConfig(config)
+
+      expect(description).toContain('personal')
+      expect(description).toContain('default')
+    })
+
+    it('should describe multiple workspace config', () => {
+      const config: MultiWorkspaceConfig = {
+        workspaces: new Map([
+          ['personal', { name: 'personal', token: 'token-1' }],
+          ['fourall', { name: 'fourall', token: 'token-2' }],
+          ['drapes', { name: 'drapes', token: 'token-3' }],
+        ]),
+        defaultWorkspace: 'personal',
+      }
+
+      const description = describeWorkspaceConfig(config)
+
+      expect(description).toContain('personal')
+      expect(description).toContain('fourall')
+      expect(description).toContain('drapes')
+      expect(description).toContain('default: personal')
+    })
+
+    it('should handle empty workspace config', () => {
+      const config: MultiWorkspaceConfig = {
+        workspaces: new Map(),
+        defaultWorkspace: '',
+      }
+
+      const description = describeWorkspaceConfig(config)
+
+      expect(description).toContain('No workspaces')
+    })
+  })
+
+  describe('Multi-workspace scenarios', () => {
+    it('should handle workspace selection', () => {
+      process.env.NOTION_TOKEN_PERSONAL = 'personal-token'
+      process.env.NOTION_TOKEN_WORK = 'work-token'
+      process.env.NOTION_DEFAULT_WORKSPACE = 'personal'
+
+      const config = loadWorkspaceConfig()
+
+      // Simulate tool parameter: workspace = 'work'
+      const selectedWorkspace = config.workspaces.get('work')
+      expect(selectedWorkspace).toBeDefined()
+      expect(selectedWorkspace?.token).toBe('work-token')
+
+      const headers = getWorkspaceHeaders(selectedWorkspace!)
+      expect(headers['Authorization']).toBe('Bearer work-token')
+    })
+
+    it('should fallback to default workspace when not specified', () => {
+      process.env.NOTION_TOKEN_PERSONAL = 'personal-token'
+      process.env.NOTION_TOKEN_WORK = 'work-token'
+      process.env.NOTION_DEFAULT_WORKSPACE = 'personal'
+
+      const config = loadWorkspaceConfig()
+
+      // Simulate tool parameter: no workspace specified
+      const defaultWorkspace = config.workspaces.get(config.defaultWorkspace)
+      expect(defaultWorkspace).toBeDefined()
+      expect(defaultWorkspace?.token).toBe('personal-token')
+    })
+
+    it('should validate workspace exists', () => {
+      process.env.NOTION_TOKEN_PERSONAL = 'token-1'
+
+      const config = loadWorkspaceConfig()
+
+      // Valid workspace
+      expect(config.workspaces.has('personal')).toBe(true)
+
+      // Invalid workspace
+      expect(config.workspaces.has('nonexistent')).toBe(false)
+    })
+  })
+
+  describe('Environment variable patterns', () => {
+    it('should detect all NOTION_TOKEN_* patterns', () => {
+      process.env.NOTION_TOKEN_ONE = 'token-1'
+      process.env.NOTION_TOKEN_TWO = 'token-2'
+      process.env.NOTION_TOKEN_THREE = 'token-3'
+      process.env.NOTION_OTHER_VAR = 'should-be-ignored'
+
+      const config = loadWorkspaceConfig()
+
+      expect(config.workspaces.size).toBe(3)
+      expect(config.workspaces.has('one')).toBe(true)
+      expect(config.workspaces.has('two')).toBe(true)
+      expect(config.workspaces.has('three')).toBe(true)
+    })
+
+    it('should ignore empty token values', () => {
+      process.env.NOTION_TOKEN_VALID = 'valid-token'
+      process.env.NOTION_TOKEN_EMPTY = ''
+
+      const config = loadWorkspaceConfig()
+
+      expect(config.workspaces.has('valid')).toBe(true)
+      // Empty tokens should be filtered out
+      expect(config.workspaces.has('empty')).toBe(false)
+    })
+
+    it('should handle special characters in workspace names', () => {
+      process.env['NOTION_TOKEN_my-workspace'] = 'token-1'
+      process.env['NOTION_TOKEN_workspace_123'] = 'token-2'
+
+      const config = loadWorkspaceConfig()
+
+      // Workspace names should be extracted correctly
+      expect(config.workspaces.size).toBeGreaterThan(0)
+    })
+  })
+
+  describe('Backward compatibility', () => {
+    it('should support legacy single-token mode', () => {
+      process.env.NOTION_TOKEN = 'legacy-token'
+
+      const config = loadWorkspaceConfig()
+
+      expect(config.workspaces.size).toBe(1)
+      const defaultWs = config.workspaces.get('default')
+      expect(defaultWs?.token).toBe('legacy-token')
+    })
+
+    it('should prioritize NOTION_TOKEN_* over NOTION_TOKEN', () => {
+      process.env.NOTION_TOKEN = 'legacy-token'
+      process.env.NOTION_TOKEN_PERSONAL = 'new-token'
+
+      const config = loadWorkspaceConfig()
+
+      // Should have workspace from NOTION_TOKEN_PERSONAL
+      expect(config.workspaces.has('personal')).toBe(true)
+
+      // Legacy token should still be available if no NOTION_TOKEN_* found
+      // But in this case, we have NOTION_TOKEN_PERSONAL, so it takes precedence
+      expect(config.workspaces.size).toBeGreaterThanOrEqual(1)
+    })
+  })
+})
