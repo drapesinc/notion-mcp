@@ -1,4 +1,5 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js'
+import { getAllDataSourceIds, getDatabaseId, getDataSourceId } from './workspace-config.js'
 
 export interface CustomToolHandler {
   (params: Record<string, any>, httpClient: any): Promise<any>
@@ -1046,8 +1047,21 @@ export const customTools: CustomTool[] = [
         // If template_id is provided, use the new templates API
         if (template_id) {
           try {
+            // 2025-09-03 API: First get database to retrieve data_source_id
+            let dataSourceId = database_id
+            try {
+              const dbResponse = await httpClient.executeOperation(
+                { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
+                { database_id }
+              )
+              const dataSources = dbResponse.data.data_sources || []
+              if (dataSources.length > 0) {
+                dataSourceId = dataSources[0].id
+              }
+            } catch { /* Use database_id as fallback */ }
+
             const templateBody: any = {
-              parent: { type: 'data_source_id', data_source_id: database_id },
+              parent: { type: 'data_source_id', data_source_id: dataSourceId },
               properties
             }
 
@@ -1436,13 +1450,8 @@ export const customTools: CustomTool[] = [
     handler: async (params, httpClient) => {
       const { include_details = true, days_ahead = 0 } = params
 
-      // Hardcoded database IDs for each workspace's Tasks database
-      // The workspace is determined by the MCP proxy based on the workspace param
-      const TASKS_DATABASES: Record<string, string> = {
-        personal: 'REDACTED_DB_ID_PERSONAL',
-        fourall: 'REDACTED_DB_ID_FOURALL',
-        drapes: 'REDACTED_DB_ID_DRAPES'
-      }
+      // Get Tasks data_source IDs from env vars with fallback to defaults
+      const TASKS_DATASOURCES = getAllDataSourceIds('tasks')
 
       // Calculate the due date cutoff
       const today = new Date()
@@ -1452,41 +1461,44 @@ export const customTools: CustomTool[] = [
       const allTasks: any[] = []
       let workspaceName = 'unknown'
 
-      // Try each database ID to find which one works with this httpClient
+      const queryFilter = {
+        filter: {
+          and: [
+            { property: 'Due', date: { on_or_before: dueDateCutoff } },
+            { property: 'Status', status: { does_not_equal: 'Done' } },
+            { property: 'Status', status: { does_not_equal: "Don't Do" } },
+            { property: 'Status', status: { does_not_equal: 'Archived' } }
+          ]
+        },
+        sorts: [{ property: 'Due', direction: 'ascending' }],
+        page_size: 50
+      }
+
+      // Try each data_source ID to find which one works with this httpClient
       // (The httpClient is already configured for a specific workspace by the MCP proxy)
-      for (const [ws, dbId] of Object.entries(TASKS_DATABASES)) {
+      for (const [ws, dsId] of Object.entries(TASKS_DATASOURCES)) {
         try {
-          // Query the Tasks database with filters
-          const queryResponse = await httpClient.executeOperation(
-            { method: 'post', path: '/v1/databases/{database_id}/query', operationId: 'post-database-query' },
-            {
-              database_id: dbId,
-              filter: {
-                and: [
-                  {
-                    property: 'Due',
-                    date: { on_or_before: dueDateCutoff }
-                  },
-                  {
-                    property: 'Status',
-                    status: { does_not_equal: 'Done' }
-                  },
-                  {
-                    property: 'Status',
-                    status: { does_not_equal: "Don't Do" }
-                  },
-                  {
-                    property: 'Status',
-                    status: { does_not_equal: 'Archived' }
-                  }
-                ]
-              },
-              sorts: [
-                { property: 'Due', direction: 'ascending' }
-              ],
-              page_size: 50
-            }
-          )
+          // 2025-09-03 API: Use data_source ID directly, fall back to database ID if needed
+          let queryResponse
+          try {
+            queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${dsId}/query`, queryFilter)
+          } catch {
+            // Fallback: Try database ID with discovery
+            const dbId = getDatabaseId('tasks', ws)
+            if (!dbId) continue
+            let dataSourceId = dbId
+            try {
+              const dbResponse = await httpClient.executeOperation(
+                { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
+                { database_id: dbId }
+              )
+              const dataSources = dbResponse.data.data_sources || []
+              if (dataSources.length > 0) {
+                dataSourceId = dataSources[0].id
+              }
+            } catch { /* Use dbId */ }
+            queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${dataSourceId}/query`, queryFilter)
+          }
 
           // Successfully queried this workspace
           workspaceName = ws
