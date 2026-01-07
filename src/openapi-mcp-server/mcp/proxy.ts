@@ -1,5 +1,15 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
-import { CallToolRequestSchema, JSONRPCResponse, ListToolsRequestSchema, Tool } from '@modelcontextprotocol/sdk/types.js'
+import {
+  CallToolRequestSchema,
+  JSONRPCResponse,
+  ListToolsRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  Tool
+} from '@modelcontextprotocol/sdk/types.js'
 import { JSONSchema7 as IJsonSchema } from 'json-schema'
 import { OpenAPIToMCPConverter } from '../openapi/parser'
 import { HttpClient, HttpClientError } from '../client/http-client'
@@ -16,6 +26,8 @@ import {
   type MultiWorkspaceConfig,
   type WorkspaceConfig
 } from '../../workspace-config'
+import { getPromptsList, getPromptByName } from '../../workflow-prompts'
+import { getStaticResources, getResourceTemplates, readResource } from '../../workflow-resources'
 
 type PathItemObject = OpenAPIV3.PathItemObject & {
   get?: OpenAPIV3.OperationObject
@@ -56,7 +68,7 @@ export class MCPProxy {
   private openApiSpec: OpenAPIV3.Document
 
   constructor(name: string, openApiSpec: OpenAPIV3.Document) {
-    this.server = new Server({ name, version: '1.0.0' }, { capabilities: { tools: {} } })
+    this.server = new Server({ name, version: '1.0.0' }, { capabilities: { tools: {}, prompts: {}, resources: {} } })
     this.openApiSpec = openApiSpec
 
     const baseUrl = openApiSpec.servers?.[0].url
@@ -244,16 +256,21 @@ export class MCPProxy {
               },
             ],
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error('Error in custom tool call', error)
+          const errorResponse: any = {
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Unknown error',
+          }
+          // Include detailed error data from Notion API if available
+          if (error.data) {
+            errorResponse.details = error.data
+          }
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify({
-                  status: 'error',
-                  message: error instanceof Error ? error.message : 'Unknown error',
-                }),
+                text: JSON.stringify(errorResponse),
               },
             ],
           }
@@ -315,6 +332,42 @@ export class MCPProxy {
         throw error
       }
     })
+
+    // Handle prompts listing
+    this.server.setRequestHandler(ListPromptsRequestSchema, async () => {
+      return { prompts: getPromptsList() }
+    })
+
+    // Handle getting a specific prompt
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+      const { name, arguments: args } = request.params
+      const workflowPrompt = getPromptByName(name)
+
+      if (!workflowPrompt) {
+        throw new Error(`Prompt '${name}' not found`)
+      }
+
+      return {
+        description: workflowPrompt.prompt.description,
+        messages: workflowPrompt.getMessages(args || {})
+      }
+    })
+
+    // Handle resources listing
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+      return { resources: getStaticResources() }
+    })
+
+    // Handle resource templates listing
+    this.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
+      return { resourceTemplates: getResourceTemplates() }
+    })
+
+    // Handle reading a resource
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const { uri } = request.params
+      return readResource(uri)
+    })
   }
 
   private findOperation(operationId: string): (OpenAPIV3.OperationObject & { method: string; path: string }) | null {
@@ -345,7 +398,7 @@ export class MCPProxy {
     if (notionToken) {
       return {
         'Authorization': `Bearer ${notionToken}`,
-        'Notion-Version': '2022-06-28'
+        'Notion-Version': '2025-09-03'
       }
     }
 

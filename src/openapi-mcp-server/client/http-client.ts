@@ -1,6 +1,6 @@
 import type { OpenAPIV3, OpenAPIV3_1 } from 'openapi-types'
 import OpenAPIClientAxios from 'openapi-client-axios'
-import type { AxiosInstance } from 'axios'
+import axios, { type AxiosInstance } from 'axios'
 import FormData from 'form-data'
 import fs from 'fs'
 import { Headers } from './polyfill-headers'
@@ -34,6 +34,7 @@ export class HttpClient {
   private client: OpenAPIClientAxios
   private openApiSpec: OpenAPIV3.Document | OpenAPIV3_1.Document
   private operationCache: Map<string, OpenAPIV3.OperationObject & { method: string; path: string }> = new Map()
+  private directAxios: AxiosInstance
 
   constructor(config: HttpClientConfig, openApiSpec: OpenAPIV3.Document | OpenAPIV3_1.Document) {
     this.openApiSpec = openApiSpec
@@ -50,6 +51,16 @@ export class HttpClient {
       },
     })
     this.api = this.client.init()
+
+    // Create a direct axios instance for raw requests (bypasses openapi-client-axios)
+    this.directAxios = axios.create({
+      baseURL: config.baseUrl,
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'notion-mcp-server',
+        ...config.headers,
+      },
+    })
   }
 
   /**
@@ -238,7 +249,7 @@ export class HttpClient {
 
   /**
    * Make a raw HTTP request without needing an OpenAPI operation definition.
-   * Useful for calling endpoints not in the OpenAPI spec.
+   * Uses direct axios instance to bypass openapi-client-axios.
    */
   async rawRequest<T = any>(
     method: 'get' | 'post' | 'put' | 'patch' | 'delete',
@@ -246,18 +257,15 @@ export class HttpClient {
     params: Record<string, any> = {},
     options: { headers?: Record<string, string> } = {}
   ): Promise<HttpClientResponse<T>> {
-    const api = await this.api
-
     try {
       let response
       const config = {
         headers: {
-          'Content-Type': 'application/json',
           ...options.headers
         }
       }
 
-      // Interpolate path parameters
+      // Interpolate path parameters (if any remain in template form)
       let interpolatedPath = path
       const pathParams: string[] = []
       path.replace(/\{(\w+)\}/g, (_, param) => {
@@ -276,15 +284,25 @@ export class HttpClient {
         delete bodyParams[param]
       }
 
+      // Use direct axios instance (bypasses openapi-client-axios)
+      // Debug: log the actual request details
+      console.error('[rawRequest DEBUG]', {
+        method,
+        interpolatedPath,
+        baseURL: this.directAxios.defaults.baseURL,
+        fullUrl: `${this.directAxios.defaults.baseURL}${interpolatedPath}`,
+        bodyParams: JSON.stringify(bodyParams).slice(0, 200)
+      })
+
       if (method === 'get' || method === 'delete') {
-        response = await api.request({
+        response = await this.directAxios.request({
           method,
           url: interpolatedPath,
           params: bodyParams,
           ...config
         })
       } else {
-        response = await api.request({
+        response = await this.directAxios.request({
           method,
           url: interpolatedPath,
           data: bodyParams,
@@ -303,6 +321,13 @@ export class HttpClient {
         headers: responseHeaders,
       }
     } catch (error: any) {
+      console.error('[rawRequest ERROR]', {
+        message: error.message,
+        status: error.response?.status,
+        requestUrl: error.config?.url,
+        requestBaseURL: error.config?.baseURL,
+        responseData: JSON.stringify(error.response?.data).slice(0, 300)
+      })
       if (error.response) {
         const headers = new Headers()
         Object.entries(error.response.headers).forEach(([key, value]) => {
