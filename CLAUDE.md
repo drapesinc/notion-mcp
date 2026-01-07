@@ -31,9 +31,68 @@ NOTION_TOKEN=secret_xxx
 - `src/custom-tools.ts` - Custom workflow tools
 - `src/toolset-config.ts` - Tool filtering configuration
 
-## Custom Tools
+## Unified CRUD Tools
 
-Beyond the standard Notion API operations:
+6 action-based tools that consolidate all Notion operations:
+
+| Tool | Actions | Description |
+|------|---------|-------------|
+| `notion-page` | get, create, update, delete | Page CRUD with template support and relation modes |
+| `notion-blocks` | get, get-block, append, update, delete, replace-section, add-activity-log, complete-todo, add-table-row, update-table-row, add-table-column | Block operations with structured content syntax, table CRUD, and appending to any container block |
+| `notion-database` | get, query, get-due-tasks | Database schema and querying |
+| `notion-search` | (query) | Search pages and databases |
+| `notion-comments` | get, create | Comments on pages |
+| `notion-users` | list, get, me | User information |
+
+### Example Usage
+
+```json
+// Get a page with blocks
+{ "action": "get", "page_id": "abc123", "include_blocks": true }
+
+// Create a task with content
+{ "action": "create", "database_id": "xyz789", "title": "New Task", "initial_content": "h2: Overview\n- First item" }
+
+// Update page relations (append mode)
+{ "action": "update", "page_id": "abc123", "relations": { "Project": { "ids": ["project-id"], "mode": "append" } } }
+
+// Get due tasks
+{ "action": "get-due-tasks", "workspace": "personal", "days_ahead": 0 }
+
+// Append to any container block (toggle, callout, bullet, etc.)
+{ "action": "append", "block_id": "toggle-block-id", "content": "- Nested item 1\n- Nested item 2" }
+
+// Get specific block with context from URL
+{ "action": "get-block", "url": "https://www.notion.so/page-2b0b4417f9cb8060b10fca928cc67725#2e0b4417f9cb80388cafd3d440c75a4b", "context_before": 2, "context_after": 2 }
+```
+
+### Fuzzy Matching for Select Properties
+
+When creating or updating pages, multi-select, select, and status properties automatically use fuzzy matching to find the closest option if an exact match isn't found.
+
+**How it works:**
+- Fetches database schema to get valid options
+- Tries exact match first
+- Falls back to fuzzy matching (prefix, contains, bigram similarity)
+- Returns warnings showing what was matched
+
+**Example:**
+```json
+// Input with typo
+{ "action": "update", "page_id": "abc123", "properties": { "Status": { "status": { "name": "in progres" } } } }
+
+// Response includes fuzzy_matches
+{ "success": true, "fuzzy_matches": ["Status: \"in progres\" → \"In Progress\" (80% match)"] }
+```
+
+**Supported property types:**
+- `status` - Status properties
+- `select` - Single select
+- `multi_select` - Multi-select (each value matched individually)
+
+## Legacy Custom Tools
+
+Still available for backward compatibility:
 
 | Tool | Description |
 |------|-------------|
@@ -77,6 +136,132 @@ Activity logs use date toggles with @date mentions:
 
 New entries append to existing date toggle or create new one.
 
+## Table Support
+
+### Creating Tables (Structured Content)
+
+Use markdown table syntax in `initial_content` or `content` parameters:
+
+```
+| Product | Price | Stock |
+|---------|-------|-------|
+| Apple   | $1.50 | 100   |
+| Banana  | $0.75 | 250   |
+```
+
+The separator row (`|---|---|`) marks the first row as a column header.
+
+### Table CRUD Operations
+
+**Add a row:**
+```json
+{ "action": "add-table-row", "table_id": "block-id", "row_cells": ["Orange", "$2.00", "75"] }
+```
+
+**Update a row:**
+```json
+{ "action": "update-table-row", "row_id": "row-block-id", "row_cells": ["Apple", "$1.75", "150"] }
+```
+
+**Add a column:**
+```json
+{ "action": "add-table-column", "table_id": "block-id", "column_name": "Category", "column_default": "Fruit" }
+```
+
+### Parameters
+- `table_id`: The table block ID (for add-table-row, add-table-column)
+- `row_id`: The table_row block ID (for update-table-row)
+- `row_cells`: Array of cell values
+- `column_name`: Header text for new column
+- `column_default`: Default value for existing rows (optional)
+
+## Block Operations
+
+### Append to Container Blocks
+
+The `append` action now supports appending children to **any block that supports children**, not just pages. This includes:
+- Toggle blocks
+- Callout blocks
+- Bulleted/numbered list items
+- Quote blocks
+- Column blocks
+- Synced blocks
+
+**Example - Add children to a toggle:**
+```json
+{
+  "action": "append",
+  "block_id": "toggle-block-id",
+  "content": "- First nested bullet\n- Second nested bullet\n[] A todo inside the toggle"
+}
+```
+
+**Parameters:**
+- `block_id`: ID of the container block to append to (use this for non-page containers)
+- `page_id`: ID of the page to append to (use this for page-level appends)
+- `content`: Structured content to append
+- `after`: Optional block ID to insert after
+
+If both `block_id` and `page_id` are provided, `block_id` takes precedence.
+
+### Get Block with Context (get-block)
+
+Fetch a specific block with its children and surrounding sibling context. Supports Notion URLs with block hash fragments.
+
+**Parameters:**
+- `block_id`: Direct block ID
+- `url`: Notion URL (parses page_id from path, block_id from hash fragment)
+- `context_before`: Number of sibling blocks to fetch before target (default: 0)
+- `context_after`: Number of sibling blocks to fetch after target (default: 0)
+- `include_children`: Fetch nested children (default: true)
+- `max_depth`: Max depth for nested children (default: 2)
+
+**URL Formats Supported:**
+```
+# Full URL with block hash
+https://www.notion.so/workspace/Page-Title-2b0b4417f9cb8060b10fca928cc67725#2e0b4417f9cb80388cafd3d440c75a4b
+
+# URL with query params
+https://www.notion.so/workspace/Page-Title-2b0b4417f9cb8060b10fca928cc67725?source=copy_link#2e0b4417f9cb80388cafd3d440c75a4b
+
+# Short format
+page_id#block_id
+
+# Just block ID
+2e0b4417f9cb80388cafd3d440c75a4b
+```
+
+**Example - Get block with surrounding context:**
+```json
+{
+  "action": "get-block",
+  "url": "https://www.notion.so/page-2b0b4417f9cb8060b10fca928cc67725#2e0b4417f9cb80388cafd3d440c75a4b",
+  "context_before": 3,
+  "context_after": 3,
+  "include_children": true,
+  "max_depth": 2
+}
+```
+
+**Response includes:**
+```json
+{
+  "success": true,
+  "block": { /* full block object */ },
+  "block_id": "2e0b4417-f9cb-8038-8caf-d3d440c75a4b",
+  "type": "toggle",
+  "text": "Toggle title text",
+  "has_children": true,
+  "parent": { "type": "page_id", "page_id": "..." },
+  "children": [ /* nested blocks up to max_depth */ ],
+  "children_count": 5,
+  "siblings_before": [ /* 3 blocks before */ ],
+  "siblings_after": [ /* 3 blocks after */ ],
+  "position_in_parent": 7,
+  "total_siblings": 15
+}
+```
+
 ## Building
 
 ```bash
@@ -88,29 +273,58 @@ npm run build
 
 Set environment variables and run:
 ```bash
+source scripts/notion-ids.local.sh  # Your database IDs
 export NOTION_TOKEN_PERSONAL="secret_xxx"
 node bin/cli.mjs
 ```
+
+## Database ID Configuration
+
+Database and data source IDs are configured via environment variables. This allows each user to plug in their own Notion databases.
+
+### Setup
+
+1. Copy the template: `cp scripts/notion-ids.sh scripts/notion-ids.local.sh`
+2. Edit `scripts/notion-ids.local.sh` with your IDs
+3. Source before running: `source scripts/notion-ids.local.sh`
+
+### Finding Your IDs
+
+1. Search for your database: `notion-search query="Tasks"`
+2. Look for results with `type="data_source"` - use that ID for `NOTION_DS_*`
+3. The URL contains the database ID for `NOTION_DB_*`
+
+### Environment Variable Patterns
+
+```bash
+# Data Source IDs (preferred, 2025-09-03 API)
+NOTION_DS_{TYPE}_{WORKSPACE}="data-source-uuid"
+
+# Database IDs (fallback)
+NOTION_DB_{TYPE}_{WORKSPACE}="database-uuid"
+```
+
+**Examples:**
+```bash
+export NOTION_DS_TASKS_PERSONAL="135b4417-f9cb-81a3-857b-000b9fb27289"
+export NOTION_DS_PROJECTS_WORK="abcd1234-5678-90ab-cdef-1234567890ab"
+export NOTION_DB_TASKS_PERSONAL="REDACTED_DB_ID_PERSONAL"
+```
+
+The server dynamically discovers all `NOTION_DS_*` and `NOTION_DB_*` env vars at startup.
 
 ## get-due-tasks Tool
 
 Fetches tasks due today or earlier from the Tasks database for a workspace.
 
 ### Parameters
-- `workspace` (required): personal, fourall, or drapes
+- `workspace` (optional): Workspace name matching your `NOTION_DS_TASKS_{WORKSPACE}` env vars
 - `days_ahead` (optional): Include tasks due within N days from today (default: 0)
 - `include_details` (optional): Fetch checklist and activity log content (default: true)
 
 ### Filters Applied
 - Due date <= today (or today + days_ahead)
 - Status is not: Done, Don't Do, Archived
-
-### Tasks Database IDs
-| Workspace | Database ID |
-|-----------|-------------|
-| Personal | `REDACTED_DB_ID_PERSONAL` |
-| Four All | `REDACTED_DB_ID_FOURALL` |
-| Drapes | `REDACTED_DB_ID_DRAPES` |
 
 ### Expected Properties
 The Tasks database must have:
@@ -234,10 +448,40 @@ The `create-task-with-project` tool supports a `template_id` parameter:
 
 ## Toolset Configuration
 
-The workflow tools are in the `workflow` toolset. Template tools are in the `templates` toolset (included in `full` mode). Ensure they're enabled:
+The unified tools are in the `unified` toolset. Ensure they're enabled:
 ```bash
-NOTION_TOOLSET_MODE=standard  # Includes workflow by default
+NOTION_TOOLSET_MODE=standard  # Includes unified, workflow by default
 # Or explicitly:
 NOTION_TOOLSET_MODE=custom
-NOTION_TOOLSETS=core,blocks,workflow
+NOTION_TOOLSETS=core,unified,blocks,workflow
 ```
+
+## MCP Prompts
+
+Workflow prompts guide LLMs on accomplishing tasks. Access via `listPrompts()` and `getPrompt()`:
+
+| Prompt | Description |
+|--------|-------------|
+| `add-activity-log` | Add timestamped entry to a page's Activity Log section |
+| `complete-checklist-item` | Check off a to-do and log completion |
+| `get-due-tasks` | Fetch tasks due today or earlier |
+| `create-page` | Create a new page with optional template |
+| `replace-section` | Replace a section with new content |
+| `update-relations` | Update page relations with append/remove modes |
+| `daily-review` | Get due tasks and create daily summary |
+
+## MCP Resources
+
+Resources expose data for LLMs to read. Access via `listResources()` and `readResource()`:
+
+| URI | Description |
+|-----|-------------|
+| `notion://workflow/presets` | Pre-configured workflow operations |
+| `notion://workflow/databases` | Tasks database IDs by workspace |
+| `notion://workflow/tools` | Unified tools quick reference |
+| `notion://workflow/content-syntax` | Structured content syntax guide |
+| `notion://workflow/mention-syntax` | Mention syntax reference |
+
+Dynamic resources:
+- `notion://workflow/preset/{name}` - Details for a specific preset
+- `notion://workflow/database/{workspace}` - Database ID for a workspace

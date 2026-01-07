@@ -314,3 +314,41 @@ Publish
 ```
 npm publish --access public
 ```
+
+### Multi-Workspace Support (Custom Fork)
+
+This fork supports multiple Notion workspaces and configurable database IDs.
+
+#### Workspace Tokens
+
+```bash
+# Multiple workspaces (dynamically discovered)
+export NOTION_TOKEN_PERSONAL="secret_xxx"
+export NOTION_TOKEN_WORK="secret_yyy"
+export NOTION_DEFAULT_WORKSPACE=personal
+```
+
+#### Database IDs
+
+Configure your Notion database IDs via environment variables:
+
+```bash
+# Data Source IDs (preferred, 2025-09-03 API)
+export NOTION_DS_TASKS_PERSONAL="your-data-source-uuid"
+export NOTION_DS_PROJECTS_PERSONAL="..."
+
+# Database IDs (fallback)
+export NOTION_DB_TASKS_PERSONAL="your-database-uuid"
+```
+
+**Setup:**
+1. Copy template: `cp scripts/notion-ids.sh scripts/notion-ids.local.sh`
+2. Edit with your IDs
+3. Source before running: `source scripts/notion-ids.local.sh`
+
+**Finding your IDs:**
+1. Search: `notion-search query="Tasks"`
+2. Results with `type="data_source"` → use for `NOTION_DS_*`
+3. URL in result contains database ID → use for `NOTION_DB_*`
+
+See [CLAUDE.md](CLAUDE.md) for full documentation.
