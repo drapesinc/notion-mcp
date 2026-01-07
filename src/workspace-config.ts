@@ -103,7 +103,7 @@ export function getAvailableWorkspaces(config: MultiWorkspaceConfig): string[] {
 export function getWorkspaceHeaders(workspace: WorkspaceConfig): Record<string, string> {
   return {
     'Authorization': `Bearer ${workspace.token}`,
-    'Notion-Version': '2022-06-28'
+    'Notion-Version': '2025-09-03'
   }
 }
 
@@ -124,4 +124,112 @@ export function describeWorkspaceConfig(config: MultiWorkspaceConfig): string {
   return `Workspace config: Multi-workspace mode\n` +
     `  Available: ${workspaceList.join(', ')}\n` +
     `  Default: ${config.defaultWorkspace || 'none'}`
+}
+
+// ============================================================================
+// Database ID Configuration
+// ============================================================================
+
+// Database and data_source IDs are configured via environment variables
+// No hardcoded defaults - use scripts/notion-ids.sh to set them
+
+/**
+ * Get data_source ID from environment variable
+ *
+ * Environment variable pattern: NOTION_DS_{TYPE}_{WORKSPACE}
+ * Examples:
+ *   NOTION_DS_TASKS_PERSONAL=abc-123-def
+ *   NOTION_DS_PROJECTS_FOURALL=ghi-456-jkl
+ *
+ * @param dbType - The type of database (e.g., 'tasks', 'projects')
+ * @param workspace - The workspace name (e.g., 'personal', 'fourall')
+ * @returns The data_source ID from env var, or null if not found
+ */
+export function getDataSourceId(dbType: string, workspace: string): string | null {
+  const envVar = `NOTION_DS_${dbType.toUpperCase()}_${workspace.toUpperCase()}`
+  return process.env[envVar] || null
+}
+
+/**
+ * Get database ID from environment variable
+ *
+ * Environment variable pattern: NOTION_DB_{TYPE}_{WORKSPACE}
+ * Examples:
+ *   NOTION_DB_TASKS_PERSONAL=abc123
+ *   NOTION_DB_TASKS_FOURALL=def456
+ *   NOTION_DB_PROJECTS_PERSONAL=ghi789
+ *
+ * @param dbType - The type of database (e.g., 'tasks', 'projects')
+ * @param workspace - The workspace name (e.g., 'personal', 'fourall')
+ * @returns The database ID from env var, or null if not found
+ */
+export function getDatabaseId(dbType: string, workspace: string): string | null {
+  const envVar = `NOTION_DB_${dbType.toUpperCase()}_${workspace.toUpperCase()}`
+  return process.env[envVar] || null
+}
+
+/**
+ * Get data_source ID with database ID fallback
+ * Preferred method for 2025-09-03 API - tries data_source first, then database
+ *
+ * @param dbType - The type of database (e.g., 'tasks', 'projects')
+ * @param workspace - The workspace name (e.g., 'personal', 'fourall')
+ * @returns Object with dataSourceId (preferred) and databaseId (fallback)
+ */
+export function getDataSourceOrDatabaseId(dbType: string, workspace: string): {
+  dataSourceId: string | null
+  databaseId: string | null
+  preferred: string | null
+  type: 'data_source' | 'database' | null
+} {
+  const dataSourceId = getDataSourceId(dbType, workspace)
+  const databaseId = getDatabaseId(dbType, workspace)
+
+  if (dataSourceId) {
+    return { dataSourceId, databaseId, preferred: dataSourceId, type: 'data_source' }
+  }
+  if (databaseId) {
+    return { dataSourceId, databaseId, preferred: databaseId, type: 'database' }
+  }
+  return { dataSourceId: null, databaseId: null, preferred: null, type: null }
+}
+
+/**
+ * Get all data_source IDs for a type across all workspaces
+ * Scans environment variables matching NOTION_DS_{TYPE}_*
+ * @param dbType - The type of database (e.g., 'tasks')
+ * @returns Record of workspace -> data_source ID
+ */
+export function getAllDataSourceIds(dbType: string): Record<string, string> {
+  const result: Record<string, string> = {}
+  const prefix = `NOTION_DS_${dbType.toUpperCase()}_`
+
+  for (const [envVar, value] of Object.entries(process.env)) {
+    if (envVar.startsWith(prefix) && value) {
+      const workspace = envVar.substring(prefix.length).toLowerCase()
+      result[workspace] = value
+    }
+  }
+
+  return result
+}
+
+/**
+ * Get all database IDs for a type across all workspaces
+ * Scans environment variables matching NOTION_DB_{TYPE}_*
+ * @param dbType - The type of database (e.g., 'tasks')
+ * @returns Record of workspace -> database ID
+ */
+export function getAllDatabaseIds(dbType: string): Record<string, string> {
+  const result: Record<string, string> = {}
+  const prefix = `NOTION_DB_${dbType.toUpperCase()}_`
+
+  for (const [envVar, value] of Object.entries(process.env)) {
+    if (envVar.startsWith(prefix) && value) {
+      const workspace = envVar.substring(prefix.length).toLowerCase()
+      result[workspace] = value
+    }
+  }
+
+  return result
 }

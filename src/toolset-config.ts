@@ -37,6 +37,7 @@
 
 export type ToolsetName =
   | 'core'      // Basic CRUD: pages, databases, search, blocks read
+  | 'unified'   // 6 unified CRUD tools: notion-page, notion-blocks, notion-database, etc.
   | 'blocks'    // Block writing: all block types for appending content
   | 'workflow'  // Custom workflow tools: create-task, activity-log, etc.
   | 'templates' // Template operations: list and create pages from templates
@@ -69,33 +70,32 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
       'retrieve-a-page-property',
     ],
     customTools: [
-      'get-page-full',
-      'search-and-summarize',
       'get-toolset-info',
     ]
   },
+  unified: {
+    description: '6 unified CRUD tools - consolidated action-based tools for pages, blocks, databases, search, comments, users',
+    apiOperations: [],
+    customTools: [
+      'notion-page',
+      'notion-blocks',
+      'notion-database',
+      'notion-search',
+      'notion-comments',
+      'notion-users',
+    ]
+  },
   blocks: {
-    description: 'Block writing - append all types of content blocks',
+    description: 'Block writing - raw API for appending blocks (use unified tools instead)',
     apiOperations: [
       'patch-block-children',
     ],
-    customTools: [
-      'append-structured-content',
-    ]
+    customTools: []
   },
   workflow: {
-    description: 'Workflow automation - task creation, activity logging, checklists, due tasks, page editing',
+    description: 'Legacy workflow tools (deprecated - use unified tools instead)',
     apiOperations: [],
-    customTools: [
-      'create-task-with-project',
-      'add-activity-log',
-      'complete-checklist-item',
-      'get-due-tasks',
-      'delete-blocks',
-      'update-block',
-      'update-page',
-      'replace-page-section',
-    ]
+    customTools: []
   },
   templates: {
     description: 'Template operations - list database templates (requires Notion API 2025-09-03+)',
@@ -143,9 +143,9 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
 
 // Predefined mode configurations
 export const MODE_TOOLSETS: Record<ToolsetMode, ToolsetName[]> = {
-  full: ['core', 'blocks', 'workflow', 'templates', 'media', 'advanced', 'comments', 'users'],
-  standard: ['core', 'blocks', 'workflow'],
-  minimal: ['core'],
+  full: ['core', 'unified', 'blocks', 'workflow', 'templates', 'media', 'advanced', 'comments', 'users'],
+  standard: ['unified'],
+  minimal: ['unified'],
   custom: [] // Determined by NOTION_TOOLSETS env var
 }
 
