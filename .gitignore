@@ -10,3 +10,6 @@ bin/
 .cursor
 
 .DS_Store
+
+# Local configuration (contains user-specific IDs)
+*.local.sh
