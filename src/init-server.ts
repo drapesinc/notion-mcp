@@ -6,6 +6,7 @@ import OpenAPISchemaValidator from 'openapi-schema-validator'
 
 import { MCPProxy } from './openapi-mcp-server/mcp/proxy'
 import { customTools } from './custom-tools'
+import { unifiedTools } from './unified-tools'
 
 export class ValidationError extends Error {
   constructor(public errors: any[]) {
@@ -49,6 +50,9 @@ export async function initProxy(specPath: string, baseUrl: string |undefined) {
 
   // Register custom workflow tools
   proxy.registerCustomTools(customTools)
+
+  // Register unified CRUD tools (6 action-based tools)
+  proxy.registerCustomTools(unifiedTools)
 
   return proxy
 }
