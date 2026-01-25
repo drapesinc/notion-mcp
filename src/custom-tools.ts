@@ -465,6 +465,49 @@ function getSectionBlocks(blocks: any[], sectionIndex: number): any[] {
   return sectionBlocks
 }
 
+/**
+ * Find the last button block at the end of a page's blocks.
+ * Returns the block ID to insert after (the last button), or null if no buttons at end.
+ */
+function findLastButtonBlock(blocks: any[]): string | null {
+  // Scan from the end to find consecutive button blocks
+  let lastButtonId: string | null = null
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (blocks[i].type === 'button') {
+      lastButtonId = blocks[i].id
+    } else {
+      // Stop as soon as we hit a non-button block
+      break
+    }
+  }
+  return lastButtonId
+}
+
+/**
+ * Find the block ID after which to insert activity log entries.
+ * This accounts for button blocks that should remain at the end of a section.
+ * Returns the ID of the last button block after the section header, or the section header ID if no buttons.
+ */
+function findActivityLogInsertAfter(blocks: any[], sectionIndex: number): string {
+  const sectionBlock = blocks[sectionIndex]
+  const sectionBlocks = getSectionBlocks(blocks, sectionIndex)
+
+  // Look for button blocks at the end of the section
+  let lastButtonId: string | null = null
+  for (let i = sectionBlocks.length - 1; i >= 0; i--) {
+    if (sectionBlocks[i].type === 'button') {
+      lastButtonId = sectionBlocks[i].id
+    } else {
+      // Stop as soon as we hit a non-button block
+      break
+    }
+  }
+
+  // If there are buttons at the end, insert after the last one
+  // Otherwise, insert after the section header
+  return lastButtonId || sectionBlock.id
+}
+
 // Summarize block structure with nested children
 function summarizeBlocks(blocks: any[], indent: number = 0): string[] {
   const summary: string[] = []
@@ -1187,23 +1230,44 @@ export const customTools: CustomTool[] = [
 
       // If no Activity Log section, create one with a date toggle
       if (!activityLogSection) {
+        // Check if there are button blocks at the end that we should insert before
+        const lastButtonId = findLastButtonBlock(blocks)
+        const insertPayload: any = {
+          block_id: page_id,
+          children: [
+            createSectionCallout('Activity Log'),
+            {
+              type: 'toggle',
+              toggle: {
+                rich_text: dateMentionRichText(dateStr),
+                children: [
+                  { type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }
+                ]
+              }
+            }
+          ]
+        }
+
+        // If there are buttons at the end, find the block before the first button to insert after
+        if (lastButtonId) {
+          // Find the first button in the trailing sequence to insert before it
+          let firstButtonIndex = blocks.length - 1
+          for (let i = blocks.length - 1; i >= 0; i--) {
+            if (blocks[i].type === 'button') {
+              firstButtonIndex = i
+            } else {
+              break
+            }
+          }
+          // Insert after the block before the first button (or at start if buttons are first)
+          if (firstButtonIndex > 0) {
+            insertPayload.after = blocks[firstButtonIndex - 1].id
+          }
+        }
+
         const createSectionResponse = await httpClient.executeOperation(
           { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
-          {
-            block_id: page_id,
-            children: [
-              createSectionCallout('Activity Log'),
-              {
-                type: 'toggle',
-                toggle: {
-                  rich_text: dateMentionRichText(dateStr),
-                  children: [
-                    { type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }
-                  ]
-                }
-              }
-            ]
-          }
+          insertPayload
         )
 
         return {
@@ -1253,12 +1317,13 @@ export const customTools: CustomTool[] = [
         }
       }
 
-      // Create a new toggle for today's date after the Activity Log section header
+      // Create a new toggle for today's date - insert after any button blocks in the section
+      const insertAfterId = findActivityLogInsertAfter(blocks, activityLogSection.index)
       const createToggleResponse = await httpClient.executeOperation(
         { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
         {
           block_id: page_id,
-          after: activityLogSection.block.id,
+          after: insertAfterId,
           children: [
             {
               type: 'toggle',
@@ -1396,12 +1461,13 @@ export const customTools: CustomTool[] = [
             }
           )
         } else {
-          // Create new toggle for today after the section header
+          // Create new toggle for today - insert after any button blocks in the section
+          const insertAfterId = findActivityLogInsertAfter(blocks, activityLogSection.index)
           await httpClient.executeOperation(
             { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
             {
               block_id: page_id,
-              after: activityLogSection.block.id,
+              after: insertAfterId,
               children: [
                 {
                   type: 'toggle',

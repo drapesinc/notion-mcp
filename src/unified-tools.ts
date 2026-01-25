@@ -449,6 +449,49 @@ function getSectionBlocks(blocks: any[], sectionIndex: number): any[] {
   return sectionBlocks
 }
 
+/**
+ * Find the last button block at the end of a page's blocks.
+ * Returns the block ID to insert after (the last button), or null if no buttons at end.
+ */
+function findLastButtonBlock(blocks: any[]): string | null {
+  // Scan from the end to find consecutive button blocks
+  let lastButtonId: string | null = null
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (blocks[i].type === 'button') {
+      lastButtonId = blocks[i].id
+    } else {
+      // Stop as soon as we hit a non-button block
+      break
+    }
+  }
+  return lastButtonId
+}
+
+/**
+ * Find the block ID after which to insert activity log entries.
+ * This accounts for button blocks that should remain at the end of a section.
+ * Returns the ID of the last button block after the section header, or the section header ID if no buttons.
+ */
+function findActivityLogInsertAfter(blocks: any[], sectionIndex: number): string {
+  const sectionBlock = blocks[sectionIndex]
+  const sectionBlocks = getSectionBlocks(blocks, sectionIndex)
+
+  // Look for button blocks at the end of the section
+  let lastButtonId: string | null = null
+  for (let i = sectionBlocks.length - 1; i >= 0; i--) {
+    if (sectionBlocks[i].type === 'button') {
+      lastButtonId = sectionBlocks[i].id
+    } else {
+      // Stop as soon as we hit a non-button block
+      break
+    }
+  }
+
+  // If there are buttons at the end, insert after the last one
+  // Otherwise, insert after the section header
+  return lastButtonId || sectionBlock.id
+}
+
 function createSectionCallout(sectionName: string, children?: any[]): any {
   const config = SECTION_CONFIGS[sectionName.toLowerCase()] || {
     icon: { type: 'external', external: { url: 'https://www.notion.so/icons/document_gray.svg' } },
@@ -1463,15 +1506,37 @@ export const unifiedTools: CustomTool[] = [
           const activityLogSection = findSectionBlock(blocks, 'Activity Log')
 
           if (!activityLogSection) {
+            // No Activity Log section exists - create one
+            // Check if there are button blocks at the end that we should insert before
+            const lastButtonId = findLastButtonBlock(blocks)
+            const insertPayload: any = {
+              block_id: page_id,
+              children: [
+                createSectionCallout('Activity Log'),
+                { type: 'toggle', toggle: { rich_text: dateMentionRichText(dateStr), children: [{ type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }] } }
+              ]
+            }
+
+            // If there are buttons at the end, find the block before the first button to insert after
+            if (lastButtonId) {
+              // Find the first button in the trailing sequence to insert before it
+              let firstButtonIndex = blocks.length - 1
+              for (let i = blocks.length - 1; i >= 0; i--) {
+                if (blocks[i].type === 'button') {
+                  firstButtonIndex = i
+                } else {
+                  break
+                }
+              }
+              // Insert after the block before the first button (or at start if buttons are first)
+              if (firstButtonIndex > 0) {
+                insertPayload.after = blocks[firstButtonIndex - 1].id
+              }
+            }
+
             await httpClient.executeOperation(
               { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
-              {
-                block_id: page_id,
-                children: [
-                  createSectionCallout('Activity Log'),
-                  { type: 'toggle', toggle: { rich_text: dateMentionRichText(dateStr), children: [{ type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }] } }
-                ]
-              }
+              insertPayload
             )
             return { success: true, entry: logEntry, date: dateStr, section_created: true }
           }
@@ -1495,10 +1560,12 @@ export const unifiedTools: CustomTool[] = [
               { block_id: todayToggleId, children: [{ type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }] }
             )
           } else {
+            // Create new toggle for today - insert after any button blocks in the section
+            const insertAfterId = findActivityLogInsertAfter(blocks, activityLogSection.index)
             await httpClient.executeOperation(
               { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
               {
-                block_id: page_id, after: activityLogSection.block.id,
+                block_id: page_id, after: insertAfterId,
                 children: [{ type: 'toggle', toggle: { rich_text: dateMentionRichText(dateStr), children: [{ type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }] } }]
               }
             )
@@ -1562,10 +1629,12 @@ export const unifiedTools: CustomTool[] = [
                 { block_id: todayToggleId, children: [{ type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }] }
               )
             } else {
+              // Create new toggle for today - insert after any button blocks in the section
+              const insertAfterId = findActivityLogInsertAfter(blocks, activityLogSection.index)
               await httpClient.executeOperation(
                 { method: 'patch', path: '/v1/blocks/{block_id}/children', operationId: 'patch-block-children' },
                 {
-                  block_id: page_id, after: activityLogSection.block.id,
+                  block_id: page_id, after: insertAfterId,
                   children: [{ type: 'toggle', toggle: { rich_text: dateMentionRichText(dateStr), children: [{ type: 'bulleted_list_item', bulleted_list_item: { rich_text: textToRichText(logEntry) } }] } }]
                 }
               )
@@ -1725,16 +1794,18 @@ export const unifiedTools: CustomTool[] = [
   {
     definition: {
       name: 'notion-database',
-      description: 'Unified database operations: get schema, query with filters/sorts, or get due tasks from Tasks database.',
+      description: 'Unified database operations: get schema, query with filters/sorts, update database schema (title/properties), or get due tasks from Tasks database.',
       inputSchema: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['get', 'query', 'get-due-tasks'],
+            enum: ['get', 'query', 'update', 'get-due-tasks'],
             description: 'The operation to perform'
           },
-          database_id: { type: 'string', description: 'Database ID (for get, query)' },
+          database_id: { type: 'string', description: 'Database ID (for get, query, update)' },
+          title: { type: 'string', description: 'New database title (for update action)' },
+          properties: { type: 'object', description: 'Property configurations to add/update (for update action). Format: { "PropertyName": { "type_config": {...} } }', additionalProperties: true },
           filter: { type: 'object', description: 'Notion filter object', additionalProperties: true },
           sorts: { type: 'array', description: 'Sort criteria', items: { type: 'object' } },
           page_size: { type: 'number', description: 'Results per page (max 100)', default: 100 },
@@ -1746,7 +1817,7 @@ export const unifiedTools: CustomTool[] = [
       }
     },
     handler: async (params, httpClient) => {
-      const { action, database_id, filter, sorts, page_size = 100, start_cursor, days_ahead = 0, include_details = true } = params
+      const { action, database_id, title, properties, filter, sorts, page_size = 100, start_cursor, days_ahead = 0, include_details = true } = params
 
       switch (action) {
         case 'get': {
@@ -1829,6 +1900,51 @@ export const unifiedTools: CustomTool[] = [
           })
 
           return { success: true, results, has_more: response.data.has_more, next_cursor: response.data.next_cursor }
+        }
+
+        case 'update': {
+          if (!database_id) return { success: false, error: 'database_id required' }
+          if (!title && !properties) return { success: false, error: 'At least one of title or properties required' }
+
+          // Build PATCH request body
+          const patchBody: any = {}
+
+          if (title) {
+            patchBody.title = [{ type: 'text', text: { content: title } }]
+          }
+
+          if (properties) {
+            patchBody.properties = properties
+          }
+
+          try {
+            const response = await httpClient.rawRequest('patch', `/v1/databases/${database_id}`, patchBody)
+            const db = response.data
+
+            // Build summary of updated properties
+            const updatedProps = Object.fromEntries(
+              Object.entries(db.properties || {}).map(([name, prop]: [string, any]) => [name, { type: prop.type, id: prop.id }])
+            )
+
+            return {
+              success: true,
+              id: db.id,
+              title: richTextToPlain(db.title),
+              url: db.url,
+              properties_updated: properties ? Object.keys(properties) : [],
+              title_updated: !!title,
+              properties: updatedProps
+            }
+          } catch (error: any) {
+            const errMsg = error?.data?.message || error?.message || 'Update failed'
+            const errCode = error?.data?.code || error?.status
+            return {
+              success: false,
+              error: errMsg,
+              code: errCode,
+              details: error?.data
+            }
+          }
         }
 
         case 'get-due-tasks': {
