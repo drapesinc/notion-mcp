@@ -39,7 +39,7 @@ NOTION_TOKEN=secret_xxx
 |------|---------|-------------|
 | `notion-page` | get, create, update, delete | Page CRUD with template support and relation modes |
 | `notion-blocks` | get, get-block, append, update, delete, replace-section, add-activity-log, complete-todo, add-table-row, update-table-row, add-table-column | Block operations with structured content syntax, table CRUD, and appending to any container block |
-| `notion-database` | get, query, get-due-tasks | Database schema and querying |
+| `notion-database` | get, query, update, get-due-tasks | Database schema, querying, and schema updates |
 | `notion-search` | (query) | Search pages and databases |
 | `notion-comments` | get, create | Comments on pages |
 | `notion-users` | list, get, me | User information |
@@ -58,6 +58,12 @@ NOTION_TOKEN=secret_xxx
 
 // Get due tasks
 { "action": "get-due-tasks", "workspace": "personal", "days_ahead": 0 }
+
+// Update database title
+{ "action": "update", "database_id": "xyz789", "title": "New Database Title" }
+
+// Add properties to database
+{ "action": "update", "database_id": "xyz789", "properties": { "Priority": { "select": { "options": [{"name": "High"}, {"name": "Medium"}, {"name": "Low"}] } }, "Blocked": { "checkbox": {} } } }
 
 // Append to any container block (toggle, callout, bullet, etc.)
 { "action": "append", "block_id": "toggle-block-id", "content": "- Nested item 1\n- Nested item 2" }
