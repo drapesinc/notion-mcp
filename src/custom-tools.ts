@@ -688,10 +688,8 @@ export const customTools: CustomTool[] = [
       // Check if page is in a database and get that schema
       if (page.parent?.type === 'database_id') {
         try {
-          const dbResponse = await httpClient.executeOperation(
-            { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-            { database_id: page.parent.database_id }
-          )
+          // Use rawRequest since retrieve-a-database was removed in v2.0.0
+          const dbResponse = await httpClient.rawRequest('get', `/v1/databases/${page.parent.database_id}`, {})
           const db = dbResponse.data
           dbSummaries['_parent_database'] = {
             title: richTextToPlain(db.title),
@@ -1093,10 +1091,8 @@ export const customTools: CustomTool[] = [
             // 2025-09-03 API: First get database to retrieve data_source_id
             let dataSourceId = database_id
             try {
-              const dbResponse = await httpClient.executeOperation(
-                { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-                { database_id }
-              )
+              // Use rawRequest since retrieve-a-database was removed in v2.0.0
+              const dbResponse = await httpClient.rawRequest('get', `/v1/databases/${database_id}`, {})
               const dataSources = dbResponse.data.data_sources || []
               if (dataSources.length > 0) {
                 dataSourceId = dataSources[0].id
@@ -1554,10 +1550,8 @@ export const customTools: CustomTool[] = [
             if (!dbId) continue
             let dataSourceId = dbId
             try {
-              const dbResponse = await httpClient.executeOperation(
-                { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-                { database_id: dbId }
-              )
+              // Use rawRequest since retrieve-a-database was removed in v2.0.0
+              const dbResponse = await httpClient.rawRequest('get', `/v1/databases/${dbId}`, {})
               const dataSources = dbResponse.data.data_sources || []
               if (dataSources.length > 0) {
                 dataSourceId = dataSources[0].id
@@ -2196,7 +2190,7 @@ export const customTools: CustomTool[] = [
       const toolsetDefinitions = {
         core: {
           description: 'Basic CRUD operations - pages, databases, search, reading blocks',
-          tools: ['get-page-full', 'search-and-summarize', 'get-toolset-info', 'post-search', 'retrieve-a-page', 'patch-page', 'post-page', 'retrieve-a-database', 'post-database-query', 'get-block-children']
+          tools: ['get-page-full', 'search-and-summarize', 'get-toolset-info', 'post-search', 'retrieve-a-page', 'patch-page', 'post-page', 'retrieve-a-data-source', 'query-data-source', 'get-block-children']
         },
         blocks: {
           description: 'Block writing - append all types of content blocks',

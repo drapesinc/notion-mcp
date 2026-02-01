@@ -61,8 +61,8 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
       'retrieve-a-page',
       'patch-page',
       'post-page',
-      'retrieve-a-database',
-      'post-database-query',
+      'retrieve-a-data-source',  // v2.0.0: renamed from retrieve-a-database
+      'query-data-source',       // v2.0.0: renamed from post-database-query
       'get-block-children',
       'retrieve-a-block',
       'delete-a-block',
@@ -100,7 +100,7 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
   templates: {
     description: 'Template operations - list database templates (requires Notion API 2025-09-03+)',
     apiOperations: [
-      'list-templates',
+      'list-data-source-templates',  // v2.0.0: renamed from list-templates
     ],
     customTools: []
   },

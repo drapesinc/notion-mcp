@@ -1019,10 +1019,8 @@ export const unifiedTools: CustomTool[] = [
               // 2025-09-03 API: First get database to retrieve data_source_id
               let dataSourceId = database_id
               try {
-                const dbResponse = await httpClient.executeOperation(
-                  { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-                  { database_id }
-                )
+                // Use rawRequest to get database info (retrieve-a-database was removed in v2.0.0)
+                const dbResponse = await httpClient.rawRequest('get', `/v1/databases/${database_id}`, {})
                 const dataSources = dbResponse.data.data_sources || []
                 if (dataSources.length > 0) {
                   dataSourceId = dataSources[0].id
@@ -1823,10 +1821,8 @@ export const unifiedTools: CustomTool[] = [
         case 'get': {
           if (!database_id) return { success: false, error: 'database_id required' }
 
-          const response = await httpClient.executeOperation(
-            { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-            { database_id }
-          )
+          // Use rawRequest since retrieve-a-database was removed in v2.0.0
+          const response = await httpClient.rawRequest('get', `/v1/databases/${database_id}`, {})
           const db = response.data
 
           return {
@@ -1844,10 +1840,8 @@ export const unifiedTools: CustomTool[] = [
           // 2025-09-03 API: First get database to retrieve data_source_id
           let dataSourceId: string
           try {
-            const dbResponse = await httpClient.executeOperation(
-              { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-              { database_id }
-            )
+            // Use rawRequest since retrieve-a-database was removed in v2.0.0
+            const dbResponse = await httpClient.rawRequest('get', `/v1/databases/${database_id}`, {})
             const dataSources = dbResponse.data.data_sources || []
             if (dataSources.length > 0) {
               dataSourceId = dataSources[0].id
@@ -1981,10 +1975,8 @@ export const unifiedTools: CustomTool[] = [
                 if (!dbId) continue
                 let dataSourceId = dbId
                 try {
-                  const dbResponse = await httpClient.executeOperation(
-                    { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-                    { database_id: dbId }
-                  )
+                  // Use rawRequest since retrieve-a-database was removed in v2.0.0
+                  const dbResponse = await httpClient.rawRequest('get', `/v1/databases/${dbId}`, {})
                   const dataSources = dbResponse.data.data_sources || []
                   if (dataSources.length > 0) {
                     dataSourceId = dataSources[0].id
