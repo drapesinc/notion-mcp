@@ -895,13 +895,13 @@ export const customTools: CustomTool[] = [
   {
     definition: {
       name: 'create-task-with-project',
-      description: 'Create or update a task in a Tasks database. Supports relation append/remove without replacing entire array. Use page_id to update existing task.',
+      description: 'Create or update a task in a Tasks data source. Supports relation append/remove without replacing entire array. Use page_id to update existing task.',
       inputSchema: {
         type: 'object',
         properties: {
-          database_id: {
+          data_source_id: {
             type: 'string',
-            description: 'The ID of the Tasks database (required for new tasks, optional for updates)'
+            description: 'The ID of the Tasks data source (what Notion UI calls "database") - required for new tasks, optional for updates'
           },
           page_id: {
             type: 'string',
@@ -969,7 +969,7 @@ export const customTools: CustomTool[] = [
     },
     handler: async (params, httpClient) => {
       const {
-        database_id,
+        data_source_id,
         page_id,
         title,
         project_id,
@@ -1081,26 +1081,18 @@ export const customTools: CustomTool[] = [
         page = updateResponse.data
       } else {
         // Create new page
-        if (!database_id) {
-          return { success: false, error: 'database_id is required for new tasks' }
+        if (!data_source_id) {
+          return { success: false, error: 'data_source_id is required for new tasks' }
         }
 
-        // If template_id is provided, use the new templates API
+        // Build parent object using new format
+        const parentObj = { type: 'data_source_id', data_source_id }
+
+        // If template_id is provided, use the templates API
         if (template_id) {
           try {
-            // 2025-09-03 API: First get database to retrieve data_source_id
-            let dataSourceId = database_id
-            try {
-              // Use rawRequest since retrieve-a-database was removed in v2.0.0
-              const dbResponse = await httpClient.rawRequest('get', `/v1/data_sources/${database_id}`, {})
-              const dataSources = dbResponse.data.data_sources || []
-              if (dataSources.length > 0) {
-                dataSourceId = dataSources[0].id
-              }
-            } catch { /* Use database_id as fallback */ }
-
             const templateBody: any = {
-              parent: { type: 'data_source_id', data_source_id: dataSourceId },
+              parent: parentObj,
               properties
             }
 
@@ -1125,7 +1117,7 @@ export const customTools: CustomTool[] = [
               console.warn('Template API not available, falling back to standard creation')
               const createResponse = await httpClient.executeOperation(
                 { method: 'post', path: '/v1/pages', operationId: 'post-page' },
-                { parent: { database_id }, properties }
+                { parent: parentObj, properties }
               )
               page = createResponse.data
             } else {
@@ -1136,7 +1128,7 @@ export const customTools: CustomTool[] = [
           const createResponse = await httpClient.executeOperation(
             { method: 'post', path: '/v1/pages', operationId: 'post-page' },
             {
-              parent: { database_id },
+              parent: parentObj,
               properties
             }
           )
@@ -1545,19 +1537,11 @@ export const customTools: CustomTool[] = [
           try {
             queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${dsId}/query`, queryFilter)
           } catch {
-            // Fallback: Try database ID with discovery
-            const dbId = getDatabaseId('tasks', ws)
-            if (!dbId) continue
-            let dataSourceId = dbId
-            try {
-              // Use rawRequest since retrieve-a-database was removed in v2.0.0
-              const dbResponse = await httpClient.rawRequest('get', `/v1/data_sources/${dbId}`, {})
-              const dataSources = dbResponse.data.data_sources || []
-              if (dataSources.length > 0) {
-                dataSourceId = dataSources[0].id
-              }
-            } catch { /* Use dbId */ }
-            queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${dataSourceId}/query`, queryFilter)
+            // Fallback: Try legacy database ID env var
+            const legacyDbId = getDatabaseId('tasks', ws)
+            if (!legacyDbId) continue
+            // In 2025-09-03 API, the "database ID" is actually the data source ID
+            queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${legacyDbId}/query`, queryFilter)
           }
 
           // Successfully queried this workspace

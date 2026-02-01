@@ -769,12 +769,12 @@ async function resolvePropertiesWithFuzzyMatch(
   const warnings: string[] = []
   const resolved = { ...properties }
 
-  // Fetch database schema
+  // Fetch data source schema
   let schema: Record<string, any>
   try {
     const dbResponse = await httpClient.executeOperation(
-      { method: 'get', path: '/v1/data_sources/{database_id}', operationId: 'get-database' },
-      { database_id: databaseId }
+      { method: 'get', path: '/v1/data_sources/{data_source_id}', operationId: 'retrieve-a-data-source' },
+      { data_source_id: databaseId }
     )
     schema = dbResponse.data.properties || {}
   } catch (error: any) {
@@ -892,8 +892,8 @@ export const unifiedTools: CustomTool[] = [
           block_limit: { type: 'number', description: 'Max blocks to retrieve (default: 50)', default: 50 },
           expand_toggles: { type: 'boolean', description: 'Recursively fetch toggle/callout children', default: false },
           max_depth: { type: 'number', description: 'Max depth for nested expansion', default: 3 },
-          database_id: { type: 'string', description: 'Database ID for new page' },
-          parent_page_id: { type: 'string', description: 'Parent page ID (alternative to database_id)' },
+          data_source_id: { type: 'string', description: 'Data source ID for new page (what Notion UI calls "database")' },
+          parent_page_id: { type: 'string', description: 'Parent page ID (alternative to data_source_id)' },
           title: { type: 'string', description: 'Page title' },
           template_id: { type: 'string', description: 'Template ID ("default", "none", or specific ID)' },
           icon: { type: 'string', description: 'Page icon: emoji (🎯), notion:name_color (notion:rocket_blue), or external URL' },
@@ -917,7 +917,7 @@ export const unifiedTools: CustomTool[] = [
     },
     handler: async (params, httpClient) => {
       const { action, page_id, include_blocks = true, block_limit = 50, expand_toggles = false, max_depth = 3,
-              database_id, parent_page_id, title, template_id, icon, initial_content, properties = {}, relations, archive = true } = params
+              data_source_id, parent_page_id, title, template_id, icon, initial_content, properties = {}, relations, archive = true } = params
 
       switch (action) {
         case 'get': {
@@ -985,15 +985,15 @@ export const unifiedTools: CustomTool[] = [
         }
 
         case 'create': {
-          if (!database_id && !parent_page_id) return { success: false, error: 'database_id or parent_page_id required' }
+          if (!data_source_id && !parent_page_id) return { success: false, error: 'data_source_id or parent_page_id required' }
           if (!title) return { success: false, error: 'title required for create' }
 
           let resolvedProperties = properties || {}
           let fuzzyWarnings: string[] = []
 
           // Apply fuzzy matching for multi-select/status/select properties
-          if (database_id && Object.keys(resolvedProperties).length > 0) {
-            const fuzzyResult = await resolvePropertiesWithFuzzyMatch(resolvedProperties, database_id, httpClient)
+          if (data_source_id && Object.keys(resolvedProperties).length > 0) {
+            const fuzzyResult = await resolvePropertiesWithFuzzyMatch(resolvedProperties, data_source_id, httpClient)
             resolvedProperties = fuzzyResult.resolved
             fuzzyWarnings = fuzzyResult.warnings
           }
@@ -1014,21 +1014,15 @@ export const unifiedTools: CustomTool[] = [
 
           let page: any
 
-          if (template_id && database_id) {
-            try {
-              // 2025-09-03 API: First get database to retrieve data_source_id
-              let dataSourceId = database_id
-              try {
-                // Use rawRequest to get database info (retrieve-a-database was removed in v2.0.0)
-                const dbResponse = await httpClient.rawRequest('get', `/v1/data_sources/${database_id}`, {})
-                const dataSources = dbResponse.data.data_sources || []
-                if (dataSources.length > 0) {
-                  dataSourceId = dataSources[0].id
-                }
-              } catch { /* Use database_id as fallback */ }
+          // Build parent object - use new format for data sources, legacy for page parents
+          const parentObj = data_source_id
+            ? { type: 'data_source_id', data_source_id }
+            : { page_id: parent_page_id }
 
+          if (template_id && data_source_id) {
+            try {
               const templateBody: any = {
-                parent: { type: 'data_source_id', data_source_id: dataSourceId },
+                parent: parentObj,
                 properties: createProps
               }
               if (parsedIcon) templateBody.icon = parsedIcon
@@ -1040,7 +1034,8 @@ export const unifiedTools: CustomTool[] = [
               page = createResponse.data
             } catch (error: any) {
               if (error.status === 400 || error.status === 404) {
-                const fallbackBody: any = { parent: database_id ? { database_id } : { page_id: parent_page_id }, properties: createProps }
+                // Fallback: try without template
+                const fallbackBody: any = { parent: parentObj, properties: createProps }
                 if (parsedIcon) fallbackBody.icon = parsedIcon
                 const createResponse = await httpClient.executeOperation(
                   { method: 'post', path: '/v1/pages', operationId: 'post-page' },
@@ -1050,7 +1045,7 @@ export const unifiedTools: CustomTool[] = [
               } else throw error
             }
           } else {
-            const createBody: any = { parent: database_id ? { database_id } : { page_id: parent_page_id }, properties: createProps }
+            const createBody: any = { parent: parentObj, properties: createProps }
             if (parsedIcon) createBody.icon = parsedIcon
             const createResponse = await httpClient.executeOperation(
               { method: 'post', path: '/v1/pages', operationId: 'post-page' },
@@ -1081,7 +1076,8 @@ export const unifiedTools: CustomTool[] = [
           let finalProperties: any = { ...properties }
           let fuzzyWarnings: string[] = []
 
-          // Fetch page to get database_id (for fuzzy matching) and existing relations
+          // Fetch page to get parent data_source_id (for fuzzy matching) and existing relations
+          // Note: Notion response still uses parent.database_id even though it's the data_source_id
           let pageData: any = null
           const needsPageData = (relations && Object.keys(relations).length > 0) || Object.keys(finalProperties).length > 0
           if (needsPageData) {
@@ -1792,7 +1788,7 @@ export const unifiedTools: CustomTool[] = [
   {
     definition: {
       name: 'notion-database',
-      description: 'Unified database operations: get schema, query with filters/sorts, update database schema (title/properties), or get due tasks from Tasks database.',
+      description: 'Unified data source operations: get schema, query with filters/sorts, update schema (title/properties), or get due tasks. Note: In Notion API 2025-09-03+, "data source" is what the Notion UI calls a "database".',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1801,7 +1797,7 @@ export const unifiedTools: CustomTool[] = [
             enum: ['get', 'query', 'update', 'get-due-tasks'],
             description: 'The operation to perform'
           },
-          database_id: { type: 'string', description: 'Database ID (for get, query, update)' },
+          data_source_id: { type: 'string', description: 'Data source ID (what Notion UI calls "database") - for get, query, update' },
           title: { type: 'string', description: 'New database title (for update action)' },
           properties: { type: 'object', description: 'Property configurations to add/update (for update action). Format: { "PropertyName": { "type_config": {...} } }', additionalProperties: true },
           filter: { type: 'object', description: 'Notion filter object', additionalProperties: true },
@@ -1815,30 +1811,26 @@ export const unifiedTools: CustomTool[] = [
       }
     },
     handler: async (params, httpClient) => {
-      const { action, database_id, title, properties, filter, sorts, page_size = 100, start_cursor, days_ahead = 0, include_details = true } = params
+      const { action, data_source_id, title, properties, filter, sorts, page_size = 100, start_cursor, days_ahead = 0, include_details = true } = params
 
       switch (action) {
         case 'get': {
-          if (!database_id) return { success: false, error: 'database_id required' }
+          if (!data_source_id) return { success: false, error: 'data_source_id required' }
 
-          // 2025-09-03 API: Use /v1/data_sources endpoint
-          const response = await httpClient.rawRequest('get', `/v1/data_sources/${database_id}`, {})
-          const db = response.data
+          const response = await httpClient.rawRequest('get', `/v1/data_sources/${data_source_id}`, {})
+          const ds = response.data
 
           return {
             success: true,
-            id: db.id,
-            title: richTextToPlain(db.title),
-            url: db.url,
-            properties: Object.fromEntries(Object.entries(db.properties || {}).map(([name, prop]: [string, any]) => [name, { type: prop.type, id: prop.id }]))
+            id: ds.id,
+            title: richTextToPlain(ds.title),
+            url: ds.url,
+            properties: Object.fromEntries(Object.entries(ds.properties || {}).map(([name, prop]: [string, any]) => [name, { type: prop.type, id: prop.id }]))
           }
         }
 
         case 'query': {
-          if (!database_id) return { success: false, error: 'database_id required' }
-
-          // 2025-09-03 API: database_id IS the data_source_id now
-          const dataSourceId = database_id
+          if (!data_source_id) return { success: false, error: 'data_source_id required' }
 
           // Build query body
           const queryBody: any = { page_size }
@@ -1848,8 +1840,7 @@ export const unifiedTools: CustomTool[] = [
 
           let response
           try {
-            // 2025-09-03 API: Query via /v1/data_sources/{data_source_id}/query
-            response = await httpClient.rawRequest('post', `/v1/data_sources/${dataSourceId}/query`, queryBody)
+            response = await httpClient.rawRequest('post', `/v1/data_sources/${data_source_id}/query`, queryBody)
           } catch (error: any) {
             const errMsg = error?.data?.message || error?.message || 'Query failed'
             const errCode = error?.data?.code || error?.status
@@ -1884,7 +1875,7 @@ export const unifiedTools: CustomTool[] = [
         }
 
         case 'update': {
-          if (!database_id) return { success: false, error: 'database_id required' }
+          if (!data_source_id) return { success: false, error: 'data_source_id required' }
           if (!title && !properties) return { success: false, error: 'At least one of title or properties required' }
 
           // Build PATCH request body
@@ -1899,19 +1890,19 @@ export const unifiedTools: CustomTool[] = [
           }
 
           try {
-            const response = await httpClient.rawRequest('patch', `/v1/data_sources/${database_id}`, patchBody)
-            const db = response.data
+            const response = await httpClient.rawRequest('patch', `/v1/data_sources/${data_source_id}`, patchBody)
+            const ds = response.data
 
             // Build summary of updated properties
             const updatedProps = Object.fromEntries(
-              Object.entries(db.properties || {}).map(([name, prop]: [string, any]) => [name, { type: prop.type, id: prop.id }])
+              Object.entries(ds.properties || {}).map(([name, prop]: [string, any]) => [name, { type: prop.type, id: prop.id }])
             )
 
             return {
               success: true,
-              id: db.id,
-              title: richTextToPlain(db.title),
-              url: db.url,
+              id: ds.id,
+              title: richTextToPlain(ds.title),
+              url: ds.url,
               properties_updated: properties ? Object.keys(properties) : [],
               title_updated: !!title,
               properties: updatedProps
@@ -1957,19 +1948,11 @@ export const unifiedTools: CustomTool[] = [
                   page_size: 50
                 })
               } catch {
-                // Fallback: Try database ID with discovery
-                const dbId = getDatabaseId('tasks', ws)
-                if (!dbId) continue
-                let dataSourceId = dbId
-                try {
-                  // Use rawRequest since retrieve-a-database was removed in v2.0.0
-                  const dbResponse = await httpClient.rawRequest('get', `/v1/data_sources/${dbId}`, {})
-                  const dataSources = dbResponse.data.data_sources || []
-                  if (dataSources.length > 0) {
-                    dataSourceId = dataSources[0].id
-                  }
-                } catch { /* Use dbId */ }
-                queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${dataSourceId}/query`, {
+                // Fallback: Try legacy database ID env var
+                const legacyDbId = getDatabaseId('tasks', ws)
+                if (!legacyDbId) continue
+                // In 2025-09-03 API, the "database ID" is actually the data source ID
+                queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${legacyDbId}/query`, {
                   filter: {
                     and: [
                       { property: 'Due', date: { on_or_before: dueDateCutoff } },

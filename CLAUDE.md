@@ -2,6 +2,15 @@
 
 Custom fork of the Notion MCP server with multi-workspace support and workflow tools.
 
+## Notion API 2025-09-03: Database vs Data Source
+
+In Notion's API 2025-09-03, the terminology changed:
+
+- **Data Source**: What the Notion UI calls a "database" - the actual table with properties and pages. This is what you interact with most of the time.
+- **Database**: A container that can hold multiple data sources (like a workbook with multiple sheets).
+
+**For most operations, you'll use `data_source_id`** - this is the ID you get from search results or URLs. The tools in this MCP use `data_source_id` parameters to match the API terminology.
+
 ## Multi-Workspace Configuration
 
 The server supports multiple Notion workspaces via environment variables:
@@ -39,8 +48,8 @@ NOTION_TOKEN=secret_xxx
 |------|---------|-------------|
 | `notion-page` | get, create, update, delete | Page CRUD with template support and relation modes |
 | `notion-blocks` | get, get-block, append, update, delete, replace-section, add-activity-log, complete-todo, add-table-row, update-table-row, add-table-column | Block operations with structured content syntax, table CRUD, and appending to any container block |
-| `notion-database` | get, query, update, get-due-tasks | Database schema, querying, and schema updates |
-| `notion-search` | (query) | Search pages and databases |
+| `notion-database` | get, query, update, get-due-tasks | Data source schema, querying, and schema updates (uses `data_source_id`) |
+| `notion-search` | (query) | Search pages and data sources |
 | `notion-comments` | get, create | Comments on pages |
 | `notion-users` | list, get, me | User information |
 
@@ -50,8 +59,8 @@ NOTION_TOKEN=secret_xxx
 // Get a page with blocks
 { "action": "get", "page_id": "abc123", "include_blocks": true }
 
-// Create a task with content
-{ "action": "create", "database_id": "xyz789", "title": "New Task", "initial_content": "h2: Overview\n- First item" }
+// Create a task with content (use data_source_id, not database_id)
+{ "action": "create", "data_source_id": "xyz789", "title": "New Task", "initial_content": "h2: Overview\n- First item" }
 
 // Update page relations (append mode)
 { "action": "update", "page_id": "abc123", "relations": { "Project": { "ids": ["project-id"], "mode": "append" } } }
@@ -59,11 +68,11 @@ NOTION_TOKEN=secret_xxx
 // Get due tasks
 { "action": "get-due-tasks", "workspace": "personal", "days_ahead": 0 }
 
-// Update database title
-{ "action": "update", "database_id": "xyz789", "title": "New Database Title" }
+// Update data source title
+{ "action": "update", "data_source_id": "xyz789", "title": "New Data Source Title" }
 
-// Add properties to database
-{ "action": "update", "database_id": "xyz789", "properties": { "Priority": { "select": { "options": [{"name": "High"}, {"name": "Medium"}, {"name": "Low"}] } }, "Blocked": { "checkbox": {} } } }
+// Add properties to data source
+{ "action": "update", "data_source_id": "xyz789", "properties": { "Priority": { "select": { "options": [{"name": "High"}, {"name": "Medium"}, {"name": "Low"}] } }, "Blocked": { "checkbox": {} } } }
 
 // Append to any container block (toggle, callout, bullet, etc.)
 { "action": "append", "block_id": "toggle-block-id", "content": "- Nested item 1\n- Nested item 2" }
@@ -439,14 +448,14 @@ The `create-task-with-project` tool supports a `template_id` parameter:
 
 ```json
 {
-  "database_id": "REDACTED_DB_ID_FOURALL",
+  "data_source_id": "REDACTED_DB_ID_FOURALL",
   "title": "New Task from Template",
   "template_id": "default"
 }
 ```
 
 **Template ID values:**
-- `"default"` - Use the database's default template
+- `"default"` - Use the data source's default template
 - `"none"` - Create without template
 - `"<template-uuid>"` - Specific template ID from `API-list-templates`
 
