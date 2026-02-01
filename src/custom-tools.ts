@@ -689,7 +689,7 @@ export const customTools: CustomTool[] = [
       if (page.parent?.type === 'database_id') {
         try {
           // Use rawRequest since retrieve-a-database was removed in v2.0.0
-          const dbResponse = await httpClient.rawRequest('get', `/v1/databases/${page.parent.database_id}`, {})
+          const dbResponse = await httpClient.rawRequest('get', `/v1/data_sources/${page.parent.database_id}`, {})
           const db = dbResponse.data
           dbSummaries['_parent_database'] = {
             title: richTextToPlain(db.title),
@@ -1092,7 +1092,7 @@ export const customTools: CustomTool[] = [
             let dataSourceId = database_id
             try {
               // Use rawRequest since retrieve-a-database was removed in v2.0.0
-              const dbResponse = await httpClient.rawRequest('get', `/v1/databases/${database_id}`, {})
+              const dbResponse = await httpClient.rawRequest('get', `/v1/data_sources/${database_id}`, {})
               const dataSources = dbResponse.data.data_sources || []
               if (dataSources.length > 0) {
                 dataSourceId = dataSources[0].id
@@ -1551,7 +1551,7 @@ export const customTools: CustomTool[] = [
             let dataSourceId = dbId
             try {
               // Use rawRequest since retrieve-a-database was removed in v2.0.0
-              const dbResponse = await httpClient.rawRequest('get', `/v1/databases/${dbId}`, {})
+              const dbResponse = await httpClient.rawRequest('get', `/v1/data_sources/${dbId}`, {})
               const dataSources = dbResponse.data.data_sources || []
               if (dataSources.length > 0) {
                 dataSourceId = dataSources[0].id

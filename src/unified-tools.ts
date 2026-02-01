@@ -773,7 +773,7 @@ async function resolvePropertiesWithFuzzyMatch(
   let schema: Record<string, any>
   try {
     const dbResponse = await httpClient.executeOperation(
-      { method: 'get', path: '/v1/databases/{database_id}', operationId: 'get-database' },
+      { method: 'get', path: '/v1/data_sources/{database_id}', operationId: 'get-database' },
       { database_id: databaseId }
     )
     schema = dbResponse.data.properties || {}
@@ -1020,7 +1020,7 @@ export const unifiedTools: CustomTool[] = [
               let dataSourceId = database_id
               try {
                 // Use rawRequest to get database info (retrieve-a-database was removed in v2.0.0)
-                const dbResponse = await httpClient.rawRequest('get', `/v1/databases/${database_id}`, {})
+                const dbResponse = await httpClient.rawRequest('get', `/v1/data_sources/${database_id}`, {})
                 const dataSources = dbResponse.data.data_sources || []
                 if (dataSources.length > 0) {
                   dataSourceId = dataSources[0].id
@@ -1821,8 +1821,8 @@ export const unifiedTools: CustomTool[] = [
         case 'get': {
           if (!database_id) return { success: false, error: 'database_id required' }
 
-          // Use rawRequest since retrieve-a-database was removed in v2.0.0
-          const response = await httpClient.rawRequest('get', `/v1/databases/${database_id}`, {})
+          // 2025-09-03 API: Use /v1/data_sources endpoint
+          const response = await httpClient.rawRequest('get', `/v1/data_sources/${database_id}`, {})
           const db = response.data
 
           return {
@@ -1837,21 +1837,8 @@ export const unifiedTools: CustomTool[] = [
         case 'query': {
           if (!database_id) return { success: false, error: 'database_id required' }
 
-          // 2025-09-03 API: First get database to retrieve data_source_id
-          let dataSourceId: string
-          try {
-            // Use rawRequest since retrieve-a-database was removed in v2.0.0
-            const dbResponse = await httpClient.rawRequest('get', `/v1/databases/${database_id}`, {})
-            const dataSources = dbResponse.data.data_sources || []
-            if (dataSources.length > 0) {
-              dataSourceId = dataSources[0].id
-            } else {
-              // Fallback for older databases without data_sources array
-              dataSourceId = database_id
-            }
-          } catch (error: any) {
-            return { success: false, error: `Failed to get database: ${error?.message || error}` }
-          }
+          // 2025-09-03 API: database_id IS the data_source_id now
+          const dataSourceId = database_id
 
           // Build query body
           const queryBody: any = { page_size }
@@ -1912,7 +1899,7 @@ export const unifiedTools: CustomTool[] = [
           }
 
           try {
-            const response = await httpClient.rawRequest('patch', `/v1/databases/${database_id}`, patchBody)
+            const response = await httpClient.rawRequest('patch', `/v1/data_sources/${database_id}`, patchBody)
             const db = response.data
 
             // Build summary of updated properties
@@ -1976,7 +1963,7 @@ export const unifiedTools: CustomTool[] = [
                 let dataSourceId = dbId
                 try {
                   // Use rawRequest since retrieve-a-database was removed in v2.0.0
-                  const dbResponse = await httpClient.rawRequest('get', `/v1/databases/${dbId}`, {})
+                  const dbResponse = await httpClient.rawRequest('get', `/v1/data_sources/${dbId}`, {})
                   const dataSources = dbResponse.data.data_sources || []
                   if (dataSources.length > 0) {
                     dataSourceId = dataSources[0].id
@@ -2082,7 +2069,7 @@ export const unifiedTools: CustomTool[] = [
         type: 'object',
         properties: {
           query: { type: 'string', description: 'Search query text' },
-          filter_type: { type: 'string', enum: ['page', 'database'], description: 'Filter to pages or databases only' },
+          filter_type: { type: 'string', enum: ['page', 'data_source'], description: 'Filter to pages or data_sources only' },
           limit: { type: 'number', description: 'Max results', default: 10 }
         },
         required: ['query']
