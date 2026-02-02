@@ -29,14 +29,13 @@ This project implements an [MCP server](https://spec.modelcontextprotocol.io/) f
 
 ### What changed
 
-**Removed tools (4):**
+**Removed tools (3):**
 
 - `post-database-query` - replaced by `query-data-source`
-- `retrieve-a-database` - replaced by `retrieve-a-data-source`
 - `update-a-database` - replaced by `update-a-data-source`
 - `create-a-database` - replaced by `create-a-data-source`
 
-**New tools (6):**
+**New tools (7):**
 
 - `query-data-source` - Query a data source (database) with filters and sorts
 - `retrieve-a-data-source` - Get metadata and schema for a data source
@@ -44,38 +43,13 @@ This project implements an [MCP server](https://spec.modelcontextprotocol.io/) f
 - `create-a-data-source` - Create a new data source
 - `list-data-source-templates` - List available templates in a data source
 - `move-page` - Move a page to a different parent location
+- `retrieve-a-database` - Get database metadata including its data source IDs
 
 **Parameter changes:**
 
 - All database operations now use `data_source_id` instead of `database_id`
 - Search filter values changed from `["page", "database"]` to `["page", "data_source"]`
-- Page creation uses `data_source_id` for data source parents (not `database_id`)
-
-**API endpoint changes:**
-
-| Old Endpoint | New Endpoint |
-|--------------|--------------|
-| `/v1/databases/{database_id}` | `/v1/data_sources/{data_source_id}` |
-| `/v1/databases/{database_id}/query` | `/v1/data_sources/{data_source_id}/query` |
-
-**operationId changes:**
-
-| Old operationId | New operationId |
-|-----------------|-----------------|
-| `retrieve-a-database` | `retrieve-a-data-source` |
-| `post-database-query` | `query-data-source` |
-| `update-a-database` | `update-a-data-source` |
-| `create-a-database` | `create-a-data-source` |
-
-**Known limitation - Views not accessible:**
-
-The Notion API does **not** expose view configurations. You cannot retrieve:
-- Filter settings applied to database views/tabs
-- Sort configurations for specific views
-- View layout types (table, board, list, etc.)
-- View descriptions
-
-You can only query the underlying data source with your own filters. To replicate a view's behavior, you must know and apply the filters manually.
+- Page creation now supports both `page_id` and `database_id` parents (for data sources)
 
 ### Do I need to migrate?
 
@@ -86,11 +60,12 @@ If you have hardcoded tool names or prompts that reference the old database tool
 | Old Tool (v1.x) | New Tool (v2.0) | Parameter Change |
 | -------------- | --------------- | ---------------- |
 | `post-database-query` | `query-data-source` | `database_id` → `data_source_id` |
-| `retrieve-a-database` | `retrieve-a-data-source` | `database_id` → `data_source_id` |
 | `update-a-database` | `update-a-data-source` | `database_id` → `data_source_id` |
 | `create-a-database` | `create-a-data-source` | No change (uses `parent.page_id`) |
 
-**Total tools now: 21** (was 19 in v1.x)
+> **Note:** `retrieve-a-database` is still available and returns database metadata including the list of data source IDs. Use `retrieve-a-data-source` to get the schema and properties of a specific data source.
+
+**Total tools now: 22** (was 19 in v1.x)
 
 ---
 
@@ -182,6 +157,32 @@ Add the following to your `settings.json`
   }
 }
 ```
+
+###### GitHub Copilot CLI
+
+Use the Copilot CLI to interactively add the MCP server:
+
+```bash
+/mcp add
+```
+
+Alternatively, create or edit the configuration file `~/.copilot/mcp-config.json` and add:
+
+```json
+{
+  "mcpServers": {
+    "notionApi": {
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "env": {
+        "NOTION_TOKEN": "ntn_****"
+      }
+    }
+  }
+}
+```
+
+For more information, see the [Copilot CLI documentation](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli).
 
 ##### Using Docker
 
@@ -436,84 +437,3 @@ Testing changes locally in Cursor:
 npm login
 npm publish --access public
 ```
-
-### Multi-Workspace Support (Custom Fork)
-
-This fork supports multiple Notion workspaces, configurable database IDs, and custom workflow tools.
-
-#### Workspace Tokens
-
-```bash
-# Multiple workspaces (dynamically discovered via NOTION_TOKEN_* pattern)
-export NOTION_TOKEN_PERSONAL="secret_xxx"
-export NOTION_TOKEN_WORK="secret_yyy"
-export NOTION_TOKEN_CLIENT="secret_zzz"
-export NOTION_DEFAULT_WORKSPACE=personal
-```
-
-Each `NOTION_TOKEN_*` creates a workspace named after the suffix (lowercase). Tools receive an optional `workspace` parameter to target specific workspaces.
-
-#### Data Source IDs
-
-Configure your Notion data source IDs via environment variables:
-
-```bash
-# Data Source IDs (preferred for 2025-09-03 API)
-export NOTION_DS_TASKS_PERSONAL="your-data-source-uuid"
-export NOTION_DS_PROJECTS_PERSONAL="..."
-export NOTION_DS_TASKS_WORK="..."
-
-# Legacy Database IDs (fallback)
-export NOTION_DB_TASKS_PERSONAL="your-database-uuid"
-```
-
-**Setup:**
-1. Copy template: `cp scripts/notion-ids.sh scripts/notion-ids.local.sh`
-2. Edit with your IDs
-3. Source before running: `source scripts/notion-ids.local.sh`
-
-**Finding your IDs:**
-1. Search: `notion-search query="Tasks"`
-2. Results with `type="data_source"` → use that ID for `NOTION_DS_*`
-3. The URL in the result contains the same ID
-
-#### Custom Unified Tools
-
-This fork adds 6 unified action-based tools for streamlined operations:
-
-| Tool | Actions | Description |
-|------|---------|-------------|
-| `notion-page` | get, create, update, delete | Page CRUD with template support and relation modes |
-| `notion-blocks` | get, append, update, delete, replace-section | Block operations with structured content syntax |
-| `notion-database` | get, query, update, get-due-tasks | Data source schema and querying |
-| `notion-search` | (query) | Search pages and data sources |
-| `notion-comments` | get, create | Comments on pages |
-| `notion-users` | list, get, me | User information |
-
-**Example - Create a task:**
-```json
-{
-  "action": "create",
-  "data_source_id": "590ee2e8-b276-4def-84f2-655cc8eee4f3",
-  "title": "New Task",
-  "properties": { "Status": { "status": { "name": "To Do" } } },
-  "initial_content": "h2: Overview\n- First item\n[] Checklist item"
-}
-```
-
-#### Additional Custom Tools
-
-| Tool | Description |
-|------|-------------|
-| `get-page-full` | Get page with properties, blocks, and linked database summaries |
-| `create-task-with-project` | Create task linked to project with checklist |
-| `add-activity-log` | Add timestamped entry to Activity Log section |
-| `complete-checklist-item` | Check off item and move to Activity Log |
-| `get-due-tasks` | Fetch tasks due today or earlier |
-
-See [CLAUDE.md](CLAUDE.md) for full documentation including:
-- Structured content syntax
-- Fuzzy matching for select properties
-- Table CRUD operations
-- Relation append/remove modes
-- MCP prompts and resources

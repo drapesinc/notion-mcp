@@ -56,6 +56,43 @@ export interface CustomTool {
   handler: CustomToolHandler
 }
 
+/**
+ * Recursively deserialize stringified JSON values in parameters.
+ * This handles the case where MCP clients (like Cursor, Claude Code) double-serialize
+ * nested object parameters, sending them as JSON strings instead of objects.
+ *
+ * @see https://github.com/makenotion/notion-mcp-server/issues/176
+ */
+function deserializeParams(params: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === 'string') {
+      // Check if the string looks like a JSON object or array
+      const trimmed = value.trim()
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+          (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+          const parsed = JSON.parse(value)
+          // Only use parsed value if it's an object or array
+          if (typeof parsed === 'object' && parsed !== null) {
+            // Recursively deserialize nested objects
+            result[key] = Array.isArray(parsed)
+              ? parsed
+              : deserializeParams(parsed as Record<string, unknown>)
+            continue
+          }
+        } catch {
+          // If parsing fails, keep the original string value
+        }
+      }
+    }
+    result[key] = value
+  }
+
+  return result
+}
+
 // import this class, extend and return server
 export class MCPProxy {
   private server: Server
@@ -219,8 +256,12 @@ export class MCPProxy {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: rawParams } = request.params
 
+      // Deserialize any stringified JSON parameters (fixes double-serialization bug)
+      // See: https://github.com/makenotion/notion-mcp-server/issues/176
+      const deserializedRawParams = rawParams ? deserializeParams(rawParams as Record<string, unknown>) : {}
+
       // Extract workspace from params and get the correct HttpClient
-      const { workspace, ...params } = (rawParams || {}) as { workspace?: string; [key: string]: unknown }
+      const { workspace, ...params } = deserializedRawParams as { workspace?: string; [key: string]: unknown }
       const httpClient = this.getHttpClient(workspace)
 
       if (!httpClient) {
