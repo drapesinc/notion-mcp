@@ -49,7 +49,23 @@ This project implements an [MCP server](https://spec.modelcontextprotocol.io/) f
 
 - All database operations now use `data_source_id` instead of `database_id`
 - Search filter values changed from `["page", "database"]` to `["page", "data_source"]`
-- Page creation now supports both `page_id` and `database_id` parents (for data sources)
+- Page creation uses `data_source_id` for data source parents (not `database_id`)
+
+**API endpoint changes:**
+
+| Old Endpoint | New Endpoint |
+|--------------|--------------|
+| `/v1/databases/{database_id}` | `/v1/data_sources/{data_source_id}` |
+| `/v1/databases/{database_id}/query` | `/v1/data_sources/{data_source_id}/query` |
+
+**operationId changes:**
+
+| Old operationId | New operationId |
+|-----------------|-----------------|
+| `retrieve-a-database` | `retrieve-a-data-source` |
+| `post-database-query` | `query-data-source` |
+| `update-a-database` | `update-a-data-source` |
+| `create-a-database` | `create-a-data-source` |
 
 ### Do I need to migrate?
 
@@ -413,27 +429,31 @@ npm publish --access public
 
 ### Multi-Workspace Support (Custom Fork)
 
-This fork supports multiple Notion workspaces and configurable database IDs.
+This fork supports multiple Notion workspaces, configurable database IDs, and custom workflow tools.
 
 #### Workspace Tokens
 
 ```bash
-# Multiple workspaces (dynamically discovered)
+# Multiple workspaces (dynamically discovered via NOTION_TOKEN_* pattern)
 export NOTION_TOKEN_PERSONAL="secret_xxx"
 export NOTION_TOKEN_WORK="secret_yyy"
+export NOTION_TOKEN_CLIENT="secret_zzz"
 export NOTION_DEFAULT_WORKSPACE=personal
 ```
 
-#### Database IDs
+Each `NOTION_TOKEN_*` creates a workspace named after the suffix (lowercase). Tools receive an optional `workspace` parameter to target specific workspaces.
 
-Configure your Notion database IDs via environment variables:
+#### Data Source IDs
+
+Configure your Notion data source IDs via environment variables:
 
 ```bash
-# Data Source IDs (preferred, 2025-09-03 API)
+# Data Source IDs (preferred for 2025-09-03 API)
 export NOTION_DS_TASKS_PERSONAL="your-data-source-uuid"
 export NOTION_DS_PROJECTS_PERSONAL="..."
+export NOTION_DS_TASKS_WORK="..."
 
-# Database IDs (fallback)
+# Legacy Database IDs (fallback)
 export NOTION_DB_TASKS_PERSONAL="your-database-uuid"
 ```
 
@@ -444,7 +464,46 @@ export NOTION_DB_TASKS_PERSONAL="your-database-uuid"
 
 **Finding your IDs:**
 1. Search: `notion-search query="Tasks"`
-2. Results with `type="data_source"` → use for `NOTION_DS_*`
-3. URL in result contains database ID → use for `NOTION_DB_*`
+2. Results with `type="data_source"` → use that ID for `NOTION_DS_*`
+3. The URL in the result contains the same ID
 
-See [CLAUDE.md](CLAUDE.md) for full documentation.
+#### Custom Unified Tools
+
+This fork adds 6 unified action-based tools for streamlined operations:
+
+| Tool | Actions | Description |
+|------|---------|-------------|
+| `notion-page` | get, create, update, delete | Page CRUD with template support and relation modes |
+| `notion-blocks` | get, append, update, delete, replace-section | Block operations with structured content syntax |
+| `notion-database` | get, query, update, get-due-tasks | Data source schema and querying |
+| `notion-search` | (query) | Search pages and data sources |
+| `notion-comments` | get, create | Comments on pages |
+| `notion-users` | list, get, me | User information |
+
+**Example - Create a task:**
+```json
+{
+  "action": "create",
+  "data_source_id": "590ee2e8-b276-4def-84f2-655cc8eee4f3",
+  "title": "New Task",
+  "properties": { "Status": { "status": { "name": "To Do" } } },
+  "initial_content": "h2: Overview\n- First item\n[] Checklist item"
+}
+```
+
+#### Additional Custom Tools
+
+| Tool | Description |
+|------|-------------|
+| `get-page-full` | Get page with properties, blocks, and linked database summaries |
+| `create-task-with-project` | Create task linked to project with checklist |
+| `add-activity-log` | Add timestamped entry to Activity Log section |
+| `complete-checklist-item` | Check off item and move to Activity Log |
+| `get-due-tasks` | Fetch tasks due today or earlier |
+
+See [CLAUDE.md](CLAUDE.md) for full documentation including:
+- Structured content syntax
+- Fuzzy matching for select properties
+- Table CRUD operations
+- Relation append/remove modes
+- MCP prompts and resources

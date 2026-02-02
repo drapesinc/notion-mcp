@@ -11,6 +11,25 @@ In Notion's API 2025-09-03, the terminology changed:
 
 **For most operations, you'll use `data_source_id`** - this is the ID you get from search results or URLs. The tools in this MCP use `data_source_id` parameters to match the API terminology.
 
+### API Endpoint Changes
+
+| Old (pre-2025-09-03) | New (2025-09-03+) |
+|---------------------|-------------------|
+| `/v1/databases/{database_id}` | `/v1/data_sources/{data_source_id}` |
+| `retrieve-a-database` | `retrieve-a-data-source` |
+| `post-database-query` | `query-data-source` |
+| `update-a-database` | `update-a-data-source` |
+| `create-a-database` | `create-a-data-source` |
+
+### Parameter Changes
+
+All tools in this fork use **`data_source_id`** (not `database_id`) for consistency with the 2025-09-03 API:
+- `notion-page` create action: `data_source_id` parameter
+- `notion-database` actions: `data_source_id` parameter
+- `create-task-with-project`: `data_source_id` parameter
+
+**Note:** The Notion API response for pages still returns `parent.database_id` even though the API terminology uses "data source". This is a Notion API quirk - internally we handle this mapping.
+
 ## Multi-Workspace Configuration
 
 The server supports multiple Notion workspaces via environment variables:
@@ -107,21 +126,36 @@ When creating or updating pages, multi-select, select, and status properties aut
 
 ## Legacy Custom Tools
 
-Still available for backward compatibility:
+Still available for backward compatibility. All tools now use `data_source_id` parameter (not `database_id`):
 
 | Tool | Description |
 |------|-------------|
 | `get-page-full` | Get page with properties, blocks, and linked database summaries. Use `expand_toggles: true` to fetch nested toggle/callout content. |
 | `search-and-summarize` | Search Notion with summarized results |
 | `append-structured-content` | Add content using markdown-like syntax |
-| `create-task-with-project` | Create task linked to project with initial checklist |
+| `create-task-with-project` | Create/update task linked to project. Uses `data_source_id` for new tasks. |
 | `add-activity-log` | Add timestamped entry to Activity Log section |
 | `complete-checklist-item` | Check off item and move to Activity Log |
-| `get-due-tasks` | Fetch tasks due today or earlier from Tasks database |
+| `get-due-tasks` | Fetch tasks due today or earlier from Tasks data source |
 | `delete-blocks` | Delete blocks by ID, section name, or clear all |
 | `update-block` | Update a single block's text content |
 | `update-page` | Update any page properties with relation append/remove support |
 | `replace-page-section` | Replace a section with new structured content |
+
+### create-task-with-project Parameters
+
+```json
+{
+  "data_source_id": "required for new tasks - the Tasks data source ID",
+  "page_id": "optional - provide to update existing task instead of create",
+  "title": "Task title",
+  "project_id": "optional - link to a Project page",
+  "initial_checklist": ["Item 1", "Item 2"],
+  "template_id": "optional - 'default', 'none', or specific template ID",
+  "properties": { "Status": { "status": { "name": "To Do" } } },
+  "relations": { "Areas": { "ids": ["area-id"], "mode": "append" } }
+}
+```
 
 ## Section Handling
 
@@ -499,4 +533,14 @@ Resources expose data for LLMs to read. Access via `listResources()` and `readRe
 
 Dynamic resources:
 - `notion://workflow/preset/{name}` - Details for a specific preset
-- `notion://workflow/database/{workspace}` - Database ID for a workspace
+- `notion://workflow/database/{workspace}` - Data source ID for a workspace
+
+## Changelog
+
+### 2026-02-01: Notion API 2025-09-03 Migration
+
+- **Breaking:** Renamed `database_id` parameter to `data_source_id` across all tools
+- **Fixed:** Updated operationIds from `retrieve-a-database` → `retrieve-a-data-source`, etc.
+- **Fixed:** Updated API paths from `/v1/databases/` → `/v1/data_sources/`
+- **Updated:** Page creation uses new parent format `{ type: 'data_source_id', data_source_id }`
+- **Removed:** Redundant data source discovery fallback logic (no longer needed)
