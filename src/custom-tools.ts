@@ -689,8 +689,8 @@ export const customTools: CustomTool[] = [
       if (page.parent?.type === 'database_id') {
         try {
           const dbResponse = await httpClient.executeOperation(
-            { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-            { database_id: page.parent.database_id }
+            { method: 'get', path: '/v1/data_sources/{data_source_id}', operationId: 'retrieve-a-data-source' },
+            { data_source_id: page.parent.database_id }
           )
           const db = dbResponse.data
           dbSummaries['_parent_database'] = {
@@ -1094,8 +1094,8 @@ export const customTools: CustomTool[] = [
             let dataSourceId = database_id
             try {
               const dbResponse = await httpClient.executeOperation(
-                { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-                { database_id }
+                { method: 'get', path: '/v1/data_sources/{data_source_id}', operationId: 'retrieve-a-data-source' },
+                { data_source_id: database_id }
               )
               const dataSources = dbResponse.data.data_sources || []
               if (dataSources.length > 0) {
@@ -1555,8 +1555,8 @@ export const customTools: CustomTool[] = [
             let dataSourceId = dbId
             try {
               const dbResponse = await httpClient.executeOperation(
-                { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-                { database_id: dbId }
+                { method: 'get', path: '/v1/data_sources/{data_source_id}', operationId: 'retrieve-a-data-source' },
+                { data_source_id: dbId }
               )
               const dataSources = dbResponse.data.data_sources || []
               if (dataSources.length > 0) {
@@ -2196,7 +2196,7 @@ export const customTools: CustomTool[] = [
       const toolsetDefinitions = {
         core: {
           description: 'Basic CRUD operations - pages, databases, search, reading blocks',
-          tools: ['get-page-full', 'search-and-summarize', 'get-toolset-info', 'post-search', 'retrieve-a-page', 'patch-page', 'post-page', 'retrieve-a-database', 'post-database-query', 'get-block-children']
+          tools: ['get-page-full', 'search-and-summarize', 'get-toolset-info', 'post-search', 'retrieve-a-page', 'patch-page', 'post-page', 'retrieve-a-data-source', 'query-data-source', 'get-block-children']
         },
         blocks: {
           description: 'Block writing - append all types of content blocks',

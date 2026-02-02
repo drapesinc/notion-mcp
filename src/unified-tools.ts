@@ -773,8 +773,8 @@ async function resolvePropertiesWithFuzzyMatch(
   let schema: Record<string, any>
   try {
     const dbResponse = await httpClient.executeOperation(
-      { method: 'get', path: '/v1/databases/{database_id}', operationId: 'get-database' },
-      { database_id: databaseId }
+      { method: 'get', path: '/v1/data_sources/{data_source_id}', operationId: 'retrieve-a-data-source' },
+      { data_source_id: databaseId }
     )
     schema = dbResponse.data.properties || {}
   } catch (error: any) {
@@ -1020,8 +1020,8 @@ export const unifiedTools: CustomTool[] = [
               let dataSourceId = database_id
               try {
                 const dbResponse = await httpClient.executeOperation(
-                  { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-                  { database_id }
+                  { method: 'get', path: '/v1/data_sources/{data_source_id}', operationId: 'retrieve-a-data-source' },
+                  { data_source_id: database_id }
                 )
                 const dataSources = dbResponse.data.data_sources || []
                 if (dataSources.length > 0) {
@@ -1824,8 +1824,8 @@ export const unifiedTools: CustomTool[] = [
           if (!database_id) return { success: false, error: 'database_id required' }
 
           const response = await httpClient.executeOperation(
-            { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-            { database_id }
+            { method: 'get', path: '/v1/data_sources/{data_source_id}', operationId: 'retrieve-a-data-source' },
+            { data_source_id: database_id }
           )
           const db = response.data
 
@@ -1845,8 +1845,8 @@ export const unifiedTools: CustomTool[] = [
           let dataSourceId: string
           try {
             const dbResponse = await httpClient.executeOperation(
-              { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-              { database_id }
+              { method: 'get', path: '/v1/data_sources/{data_source_id}', operationId: 'retrieve-a-data-source' },
+              { data_source_id: database_id }
             )
             const dataSources = dbResponse.data.data_sources || []
             if (dataSources.length > 0) {
@@ -1918,7 +1918,7 @@ export const unifiedTools: CustomTool[] = [
           }
 
           try {
-            const response = await httpClient.rawRequest('patch', `/v1/databases/${database_id}`, patchBody)
+            const response = await httpClient.rawRequest('patch', `/v1/data_sources/${database_id}`, patchBody)
             const db = response.data
 
             // Build summary of updated properties
@@ -1982,8 +1982,8 @@ export const unifiedTools: CustomTool[] = [
                 let dataSourceId = dbId
                 try {
                   const dbResponse = await httpClient.executeOperation(
-                    { method: 'get', path: '/v1/databases/{database_id}', operationId: 'retrieve-a-database' },
-                    { database_id: dbId }
+                    { method: 'get', path: '/v1/data_sources/{data_source_id}', operationId: 'retrieve-a-data-source' },
+                    { data_source_id: dbId }
                   )
                   const dataSources = dbResponse.data.data_sources || []
                   if (dataSources.length > 0) {
