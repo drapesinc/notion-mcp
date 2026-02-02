@@ -30,6 +30,27 @@ All tools in this fork use **`data_source_id`** (not `database_id`) for consiste
 
 **Note:** The Notion API response for pages still returns `parent.database_id` even though the API terminology uses "data source". This is a Notion API quirk - internally we handle this mapping.
 
+### API Limitation: Views Not Accessible
+
+**Views, filters, sorts, and tabs are NOT exposed in the Notion API.** This is a confirmed limitation.
+
+| What You CAN Access | What You CANNOT Access |
+|---------------------|------------------------|
+| Data source schema (properties) | View filter configurations |
+| Raw data via query with your own filters | Sort order of specific views |
+| Database → data_sources mapping | List of view tabs |
+| Property options (select, multi-select) | View layout type (table, board, etc.) |
+
+**Example:** If a Notion page has a "Launch Calendar" database filtered to show only items tagged "Subscription Box", the API returns:
+- The full data source schema ✓
+- All records (unfiltered) when you query ✓
+- The filter configuration ✗ (not available)
+
+**Workarounds:**
+1. Store view configurations externally (e.g., in a config file or Notion page)
+2. Query the data source with known filters to replicate view behavior
+3. Use Notion's UI to manage views, API for data operations only
+
 ## Multi-Workspace Configuration
 
 The server supports multiple Notion workspaces via environment variables:
@@ -45,6 +66,10 @@ NOTION_DEFAULT_WORKSPACE=personal
 
 # Legacy single-workspace mode (fallback)
 NOTION_TOKEN=secret_xxx
+
+# Assignee filtering for get-due-tasks (optional)
+NOTION_DEFAULT_ASSIGNEE=Yaw
+NOTION_ASSIGNEE_FILTER_WORKSPACES=drapes,fourall
 ```
 
 ### How It Works
@@ -370,15 +395,42 @@ Fetches tasks due today or earlier from the Tasks database for a workspace.
 - `workspace` (optional): Workspace name matching your `NOTION_DS_TASKS_{WORKSPACE}` env vars
 - `days_ahead` (optional): Include tasks due within N days from today (default: 0)
 - `include_details` (optional): Fetch checklist and activity log content (default: true)
+- `assignee` (optional): Filter by assignee name. For workspaces listed in `NOTION_ASSIGNEE_FILTER_WORKSPACES`, defaults to `NOTION_DEFAULT_ASSIGNEE` if not specified. Use "all" to disable assignee filtering.
+
+### Assignee Filtering Configuration
+
+Configure assignee filtering via environment variables:
+
+```bash
+# Default assignee name to filter by (e.g., "Yaw", "John")
+NOTION_DEFAULT_ASSIGNEE=Yaw
+
+# Comma-separated list of workspaces that should auto-filter by assignee
+NOTION_ASSIGNEE_FILTER_WORKSPACES=drapes,fourall
+```
+
+**How it works:**
+- If the current workspace is in `NOTION_ASSIGNEE_FILTER_WORKSPACES` AND no `assignee` parameter is provided, the tool automatically filters by `NOTION_DEFAULT_ASSIGNEE`
+- If these env vars are not set, no default assignee filtering is applied (backwards compatible)
+- Use `assignee: "all"` to explicitly disable assignee filtering even for configured workspaces
 
 ### Filters Applied
-- Due date <= today (or today + days_ahead)
+- Due date OR Work Session date <= today (or today + days_ahead)
 - Status is not: Done, Don't Do, Archived
+- Assignee matches specified user (if configured or explicitly provided)
 
 ### Expected Properties
 The Tasks database must have:
-- `Due` - Date property
+- `Due` - Date property (primary due date)
+- `Work Session` - Date property (alternative scheduling, used by Drapes workspace)
 - `Status` - Status property (with Done, Don't Do, Archived options)
+- `Assignee` - People property (for assignee filtering)
+
+### Response Fields
+Each task includes:
+- `due`: The "Due" property value
+- `work_session`: The "Work Session" property value
+- `effective_due`: The earliest of Due or Work Session (used for sorting/summary)
 
 ## Page Section Tools
 
@@ -536,6 +588,12 @@ Dynamic resources:
 - `notion://workflow/database/{workspace}` - Data source ID for a workspace
 
 ## Changelog
+
+### 2026-02-02: API Limitation Documentation
+
+- **Documented:** View filters, sorts, and tabs are NOT accessible via Notion API
+- **Tested:** Raw API requests confirm no view configuration in `/v1/databases`, `/v1/data_sources`, or block endpoints
+- **Added:** Workarounds section for view-related use cases
 
 ### 2026-02-01: Notion API 2025-09-03 Migration
 

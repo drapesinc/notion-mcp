@@ -1484,7 +1484,7 @@ export const customTools: CustomTool[] = [
   {
     definition: {
       name: 'get-due-tasks',
-      description: 'Get tasks due on or before today from a Tasks database. Returns tasks with their checklist items and recent activity log entries. Use the workspace parameter to select which workspace to query.',
+      description: 'Get tasks due on or before today from a Tasks database. Returns tasks with their checklist items and recent activity log entries. Use the workspace parameter to select which workspace to query. Checks both "Due" and "Work Session" date properties for scheduling.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1497,12 +1497,16 @@ export const customTools: CustomTool[] = [
             type: 'number',
             description: 'Include tasks due within N days from today (default: 0 = today and overdue only)',
             default: 0
+          },
+          assignee: {
+            type: 'string',
+            description: 'Filter by assignee name. For workspaces listed in NOTION_ASSIGNEE_FILTER_WORKSPACES env var, defaults to NOTION_DEFAULT_ASSIGNEE if not specified. Use "all" to disable assignee filtering.'
           }
         }
       }
     },
     handler: async (params, httpClient) => {
-      const { include_details = true, days_ahead = 0 } = params
+      const { include_details = true, days_ahead = 0, assignee } = params
 
       // Get Tasks data_source IDs from env vars with fallback to defaults
       const TASKS_DATASOURCES = getAllDataSourceIds('tasks')
@@ -1514,24 +1518,98 @@ export const customTools: CustomTool[] = [
 
       const allTasks: any[] = []
       let workspaceName = 'unknown'
+      let resolvedAssigneeId: string | null = null
+      let assigneeFilterApplied = false
+      let usedDefaultAssignee: string | null = null
 
-      const queryFilter = {
-        filter: {
-          and: [
-            { property: 'Due', date: { on_or_before: dueDateCutoff } },
-            { property: 'Status', status: { does_not_equal: 'Done' } },
-            { property: 'Status', status: { does_not_equal: "Don't Do" } },
-            { property: 'Status', status: { does_not_equal: 'Archived' } }
-          ]
-        },
-        sorts: [{ property: 'Due', direction: 'ascending' }],
-        page_size: 50
+      // Read assignee configuration from environment variables
+      const defaultAssignee = process.env.NOTION_DEFAULT_ASSIGNEE
+      const assigneeFilterWorkspaces = process.env.NOTION_ASSIGNEE_FILTER_WORKSPACES
+        ? process.env.NOTION_ASSIGNEE_FILTER_WORKSPACES.split(',').map(w => w.trim().toLowerCase())
+        : []
+
+      // Helper function to resolve user name to UUID
+      async function resolveUserByName(name: string): Promise<{ id: string; name: string } | null> {
+        try {
+          const usersResponse = await httpClient.rawRequest('get', '/v1/users', {})
+          const users = usersResponse.data?.results || []
+
+          // Find user by name (case-insensitive partial match)
+          const normalizedName = name.toLowerCase()
+          for (const user of users) {
+            const userName = user.name?.toLowerCase() || ''
+            if (userName.includes(normalizedName) || normalizedName.includes(userName)) {
+              return { id: user.id, name: user.name }
+            }
+          }
+          return null
+        } catch {
+          return null
+        }
       }
 
       // Try each data_source ID to find which one works with this httpClient
       // (The httpClient is already configured for a specific workspace by the MCP proxy)
       for (const [ws, dsId] of Object.entries(TASKS_DATASOURCES)) {
         try {
+          // Determine if we should apply assignee filtering
+          // Configurable via NOTION_DEFAULT_ASSIGNEE and NOTION_ASSIGNEE_FILTER_WORKSPACES env vars
+          const workspaceShouldFilterByAssignee = assigneeFilterWorkspaces.includes(ws.toLowerCase())
+          let effectiveAssignee = assignee
+
+          if (workspaceShouldFilterByAssignee && !assignee && defaultAssignee) {
+            effectiveAssignee = defaultAssignee
+            usedDefaultAssignee = defaultAssignee
+          } else if (assignee?.toLowerCase() === 'all') {
+            effectiveAssignee = undefined
+          }
+
+          // Resolve assignee name to UUID if filtering is needed
+          if (effectiveAssignee) {
+            const resolvedUser = await resolveUserByName(effectiveAssignee)
+            if (resolvedUser) {
+              resolvedAssigneeId = resolvedUser.id
+              assigneeFilterApplied = true
+            } else {
+              // User not found, but continue without assignee filter
+              console.warn(`Assignee "${effectiveAssignee}" not found in workspace, skipping assignee filter`)
+            }
+          }
+
+          // Build the date filter - check both Due and Work Session properties
+          // Using "or" to catch tasks scheduled in either property
+          const dateFilter = {
+            or: [
+              { property: 'Due', date: { on_or_before: dueDateCutoff } },
+              { property: 'Work Session', date: { on_or_before: dueDateCutoff } }
+            ]
+          }
+
+          // Build the status filter
+          const statusFilter = {
+            and: [
+              { property: 'Status', status: { does_not_equal: 'Done' } },
+              { property: 'Status', status: { does_not_equal: "Don't Do" } },
+              { property: 'Status', status: { does_not_equal: 'Archived' } }
+            ]
+          }
+
+          // Build the main filter combining date, status, and optionally assignee
+          const filterConditions: any[] = [dateFilter, statusFilter]
+
+          if (resolvedAssigneeId) {
+            filterConditions.push({
+              property: 'Assignee',
+              people: { contains: resolvedAssigneeId }
+            })
+          }
+
+          const queryFilter = {
+            filter: { and: filterConditions },
+            sorts: [{ property: 'Due', direction: 'ascending' }],
+            page_size: 50
+          }
+
           // 2025-09-03 API: Use data_source ID directly, fall back to database ID if needed
           let queryResponse
           try {
@@ -1584,13 +1662,22 @@ export const customTools: CustomTool[] = [
               }
             }
 
+            // Determine the effective due date (earliest of Due or Work Session)
+            const dueDate = properties['Due']
+            const workSession = properties['Work Session']
+            const effectiveDue = (dueDate && workSession)
+              ? (dueDate < workSession ? dueDate : workSession)
+              : (dueDate || workSession)
+
             const taskData: any = {
               id: task.id,
               workspace: ws,
               title,
               url: task.url,
               status: properties['Status'],
-              due: properties['Due'],
+              due: dueDate,
+              work_session: workSession,
+              effective_due: effectiveDue,
               priority: properties['Priority'],
               assignee: properties['Assignee'],
               do_next: properties['Do Next'] || properties['Smart List'],
@@ -1658,16 +1745,17 @@ export const customTools: CustomTool[] = [
         }
       }
 
-      // Calculate summary
+      // Calculate summary using effective_due for accurate overdue detection
       const todayStr = new Date().toISOString().split('T')[0]
-      const overdue = allTasks.filter(t => t.due && t.due < todayStr).length
-      const dueToday = allTasks.filter(t => t.due === todayStr).length
-      const upcoming = allTasks.filter(t => t.due && t.due > todayStr).length
+      const overdue = allTasks.filter(t => t.effective_due && t.effective_due < todayStr).length
+      const dueToday = allTasks.filter(t => t.effective_due === todayStr).length
+      const upcoming = allTasks.filter(t => t.effective_due && t.effective_due > todayStr).length
 
       return {
         workspace: workspaceName,
         date_queried: todayStr,
         days_ahead,
+        assignee_filter: assigneeFilterApplied ? assignee || (usedDefaultAssignee ? `${usedDefaultAssignee} (default)` : null) : null,
         total_tasks: allTasks.length,
         summary: {
           overdue,

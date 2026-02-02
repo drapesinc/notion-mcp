@@ -8,13 +8,50 @@
 import { Resource, ResourceTemplate } from '@modelcontextprotocol/sdk/types.js'
 
 /**
- * Tasks database IDs by workspace
+ * Tasks database IDs by workspace - loaded from environment variables
+ *
+ * Set via: NOTION_DB_TASKS_<WORKSPACE>=<database_id>
+ * Example: NOTION_DB_TASKS_PERSONAL=abc123, NOTION_DB_TASKS_FOURALL=def456
  */
-export const TASKS_DATABASE_IDS: Record<string, string> = {
-  personal: 'REDACTED_DB_ID_PERSONAL',
-  fourall: 'REDACTED_DB_ID_FOURALL',
-  drapes: 'REDACTED_DB_ID_DRAPES'
+export function getTasksDatabaseIds(): Record<string, string> {
+  const ids: Record<string, string> = {}
+  const prefix = 'NOTION_DB_TASKS_'
+
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.startsWith(prefix) && value) {
+      const workspace = key.slice(prefix.length).toLowerCase()
+      ids[workspace] = value
+    }
+  }
+
+  return ids
 }
+
+// For backwards compatibility - lazy-loaded
+let _cachedTasksDbIds: Record<string, string> | null = null
+export const TASKS_DATABASE_IDS: Record<string, string> = new Proxy({} as Record<string, string>, {
+  get(_, prop: string) {
+    if (!_cachedTasksDbIds) {
+      _cachedTasksDbIds = getTasksDatabaseIds()
+    }
+    return _cachedTasksDbIds[prop]
+  },
+  ownKeys() {
+    if (!_cachedTasksDbIds) {
+      _cachedTasksDbIds = getTasksDatabaseIds()
+    }
+    return Object.keys(_cachedTasksDbIds)
+  },
+  getOwnPropertyDescriptor(_, prop: string) {
+    if (!_cachedTasksDbIds) {
+      _cachedTasksDbIds = getTasksDatabaseIds()
+    }
+    if (prop in _cachedTasksDbIds) {
+      return { enumerable: true, configurable: true, value: _cachedTasksDbIds[prop] }
+    }
+    return undefined
+  }
+})
 
 /**
  * Workflow preset configuration

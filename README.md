@@ -67,6 +67,16 @@ This project implements an [MCP server](https://spec.modelcontextprotocol.io/) f
 | `update-a-database` | `update-a-data-source` |
 | `create-a-database` | `create-a-data-source` |
 
+**Known limitation - Views not accessible:**
+
+The Notion API does **not** expose view configurations. You cannot retrieve:
+- Filter settings applied to database views/tabs
+- Sort configurations for specific views
+- View layout types (table, board, list, etc.)
+- View descriptions
+
+You can only query the underlying data source with your own filters. To replicate a view's behavior, you must know and apply the filters manually.
+
 ### Do I need to migrate?
 
 **No code changes required.** MCP tools are discovered automatically when the server starts. When you upgrade to v2.0.0, AI clients will automatically see the new tool names and parameters. The old database tools are no longer available.
