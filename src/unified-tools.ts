@@ -1920,7 +1920,7 @@ export const unifiedTools: CustomTool[] = [
         }
 
         case 'get-due-tasks': {
-          // Get Tasks data_source IDs from env vars with fallback to defaults
+          // Get Tasks data_source IDs from env vars
           const TASKS_DATASOURCES = getAllDataSourceIds('tasks')
 
           const today = new Date()
@@ -1929,39 +1929,75 @@ export const unifiedTools: CustomTool[] = [
 
           const allTasks: any[] = []
           let workspaceName = 'unknown'
+          const errors: string[] = []
+          const debug: string[] = [`datasources: ${JSON.stringify(TASKS_DATASOURCES)}`]
 
           for (const [ws, dsId] of Object.entries(TASKS_DATASOURCES)) {
+            debug.push(`trying ${ws}: ${dsId}`)
             try {
+              // Auto-discover property names from schema
+              let statusPropertyName = 'Status'
+              const dateProperties: string[] = []
+              try {
+                const schemaResponse = await httpClient.rawRequest('get', `/v1/data_sources/${dsId}`, {})
+                const properties = schemaResponse.data?.properties || {}
+                for (const [propName, propDef] of Object.entries(properties)) {
+                  const propType = (propDef as any).type
+                  // Find the status property (usually only one)
+                  if (propType === 'status') {
+                    statusPropertyName = propName
+                  }
+                  // Collect scheduling-related date properties
+                  if (propType === 'date') {
+                    const lowerName = propName.toLowerCase()
+                    if (['due', 'deadline', 'work session'].includes(lowerName)) {
+                      dateProperties.push(propName)
+                    }
+                  }
+                }
+              } catch (schemaErr: any) {
+                // Fall back to defaults if schema fetch fails
+                debug.push(`${ws} schema error: ${schemaErr?.data?.message || schemaErr?.message || 'Unknown'}`)
+                dateProperties.push('Due', 'Work Session')
+              }
+              if (dateProperties.length === 0) {
+                dateProperties.push('Due', 'Work Session')
+              }
+              debug.push(`${ws} props: status=${statusPropertyName}, dates=${dateProperties.join(',')}`)
+
+
+              // Build date filter with OR across all scheduling properties
+              const dateFilters = dateProperties.map(prop => ({
+                property: prop, date: { on_or_before: dueDateCutoff }
+              }))
+              const dateFilter = dateFilters.length === 1
+                ? dateFilters[0]
+                : { or: dateFilters }
+
+              // Build status filter
+              const statusFilter = {
+                and: [
+                  { property: statusPropertyName, status: { does_not_equal: 'Done' } },
+                  { property: statusPropertyName, status: { does_not_equal: "Don't Do" } },
+                  { property: statusPropertyName, status: { does_not_equal: 'Archived' } }
+                ]
+              }
+
               // 2025-09-03 API: Use data_source ID directly, fall back to database ID if needed
               let queryResponse
               try {
                 queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${dsId}/query`, {
-                  filter: {
-                    and: [
-                      { property: 'Due', date: { on_or_before: dueDateCutoff } },
-                      { property: 'Status', status: { does_not_equal: 'Done' } },
-                      { property: 'Status', status: { does_not_equal: "Don't Do" } },
-                      { property: 'Status', status: { does_not_equal: 'Archived' } }
-                    ]
-                  },
-                  sorts: [{ property: 'Due', direction: 'ascending' }],
+                  filter: { and: [dateFilter, statusFilter] },
+                  sorts: [{ property: dateProperties[0], direction: 'ascending' }],
                   page_size: 50
                 })
               } catch {
                 // Fallback: Try legacy database ID env var
                 const legacyDbId = getDatabaseId('tasks', ws)
                 if (!legacyDbId) continue
-                // In 2025-09-03 API, the "database ID" is actually the data source ID
                 queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${legacyDbId}/query`, {
-                  filter: {
-                    and: [
-                      { property: 'Due', date: { on_or_before: dueDateCutoff } },
-                      { property: 'Status', status: { does_not_equal: 'Done' } },
-                      { property: 'Status', status: { does_not_equal: "Don't Do" } },
-                      { property: 'Status', status: { does_not_equal: 'Archived' } }
-                    ]
-                  },
-                  sorts: [{ property: 'Due', direction: 'ascending' }],
+                  filter: { and: [dateFilter, statusFilter] },
+                  sorts: [{ property: dateProperties[0], direction: 'ascending' }],
                   page_size: 50
                 })
               }
@@ -1985,9 +2021,21 @@ export const unifiedTools: CustomTool[] = [
                   }
                 }
 
+                // Extract status and due from discovered properties
+                const status = properties[statusPropertyName]
+                // Find the earliest due date from scheduling properties
+                let due: string | undefined
+                for (const dateProp of dateProperties) {
+                  if (properties[dateProp]) {
+                    if (!due || properties[dateProp] < due) {
+                      due = properties[dateProp]
+                    }
+                  }
+                }
+
                 const taskData: any = {
                   id: task.id, workspace: ws, title, url: task.url,
-                  status: properties['Status'], due: properties['Due'],
+                  status, due,
                   do_next: properties['Do Next'] || properties['Smart List']
                 }
 
@@ -2016,13 +2064,17 @@ export const unifiedTools: CustomTool[] = [
                 allTasks.push(taskData)
               }
               break
-            } catch { continue }
+            } catch (err: any) {
+              errors.push(`${ws}: ${err?.data?.message || err?.message || 'Unknown error'}`)
+              continue
+            }
           }
 
           const todayStr = new Date().toISOString().split('T')[0]
+          const debugInfo = workspaceName === 'unknown' ? `${workspaceName}[${debug.length}d,${errors.length}e]` : workspaceName
           return {
             success: true,
-            workspace: workspaceName,
+            workspace: debugInfo,
             date_queried: todayStr,
             days_ahead,
             total_tasks: allTasks.length,

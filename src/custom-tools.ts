@@ -1576,21 +1576,48 @@ export const customTools: CustomTool[] = [
             }
           }
 
-          // Build the date filter - check both Due and Work Session properties
+          // Detect property names from schema (different databases use different names)
+          // Due vs Deadline, Status vs Work Status, etc.
+          let duePropertyName = 'Due' // default
+          let statusPropertyName = 'Status' // default
+          try {
+            const schemaResponse = await httpClient.rawRequest('get', `/v1/data_sources/${dsId}`, {})
+            const properties = schemaResponse.data?.properties || {}
+            for (const [propName, propDef] of Object.entries(properties)) {
+              const propType = (propDef as any).type
+              // Detect status property
+              if (propType === 'status') {
+                statusPropertyName = propName
+              }
+              // Detect due date property (prefer "Due", fallback to "Deadline")
+              if (propType === 'date') {
+                const lowerName = propName.toLowerCase()
+                if (lowerName === 'due') {
+                  duePropertyName = propName
+                } else if (lowerName === 'deadline' && duePropertyName === 'Due') {
+                  duePropertyName = propName
+                }
+              }
+            }
+          } catch {
+            // Fall back to defaults if schema fetch fails
+          }
+
+          // Build the date filter - check both Due/Deadline and Work Session properties
           // Using "or" to catch tasks scheduled in either property
           const dateFilter = {
             or: [
-              { property: 'Due', date: { on_or_before: dueDateCutoff } },
+              { property: duePropertyName, date: { on_or_before: dueDateCutoff } },
               { property: 'Work Session', date: { on_or_before: dueDateCutoff } }
             ]
           }
 
-          // Build the status filter
+          // Build the status filter using detected property name
           const statusFilter = {
             and: [
-              { property: 'Status', status: { does_not_equal: 'Done' } },
-              { property: 'Status', status: { does_not_equal: "Don't Do" } },
-              { property: 'Status', status: { does_not_equal: 'Archived' } }
+              { property: statusPropertyName, status: { does_not_equal: 'Done' } },
+              { property: statusPropertyName, status: { does_not_equal: "Don't Do" } },
+              { property: statusPropertyName, status: { does_not_equal: 'Archived' } }
             ]
           }
 
