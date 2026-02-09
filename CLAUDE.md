@@ -396,6 +396,7 @@ Fetches tasks due today or earlier from the Tasks database for a workspace.
 - `days_ahead` (optional): Include tasks due within N days from today (default: 0)
 - `include_details` (optional): Fetch checklist and activity log content (default: true)
 - `assignee` (optional): Filter by assignee name. For workspaces listed in `NOTION_ASSIGNEE_FILTER_WORKSPACES`, defaults to `NOTION_DEFAULT_ASSIGNEE` if not specified. Use "all" to disable assignee filtering.
+- `overdue_floor_days` (optional): Only return overdue tasks within this many days in the past (default: 60). Prevents ancient stale tasks from filling up the result set. Use 0 for "only today and future". Use -1 for "no floor, return all overdue tasks" (backwards-compatible behavior).
 
 ### Assignee Filtering Configuration
 
@@ -416,6 +417,7 @@ NOTION_ASSIGNEE_FILTER_WORKSPACES=drapes,fourall
 
 ### Filters Applied
 - Due date OR Work Session date <= today (or today + days_ahead)
+- Due date OR Work Session date >= today - overdue_floor_days (when overdue_floor_days >= 0)
 - Status is not: Done, Don't Do, Archived
 - Assignee matches specified user (if configured or explicitly provided)
 

@@ -1805,13 +1805,14 @@ export const unifiedTools: CustomTool[] = [
           page_size: { type: 'number', description: 'Results per page (max 100)', default: 100 },
           start_cursor: { type: 'string', description: 'Pagination cursor' },
           days_ahead: { type: 'number', description: 'Include tasks due within N days', default: 0 },
-          include_details: { type: 'boolean', description: 'Fetch checklist/activity for each task', default: true }
+          include_details: { type: 'boolean', description: 'Fetch checklist/activity for each task', default: true },
+          overdue_floor_days: { type: 'number', description: 'Only return overdue tasks within this many days in the past (default: 60). Use 0 for today only. Use -1 for no floor (all overdue).', default: 60 }
         },
         required: ['action']
       }
     },
     handler: async (params, httpClient) => {
-      const { action, data_source_id, title, properties, filter, sorts, page_size = 100, start_cursor, days_ahead = 0, include_details = true } = params
+      const { action, data_source_id, title, properties, filter, sorts, page_size = 100, start_cursor, days_ahead = 0, include_details = true, overdue_floor_days = 60 } = params
 
       switch (action) {
         case 'get': {
@@ -1927,6 +1928,15 @@ export const unifiedTools: CustomTool[] = [
           today.setDate(today.getDate() + days_ahead)
           const dueDateCutoff = today.toISOString().split('T')[0]
 
+          // Calculate the overdue floor date (lower bound)
+          // -1 means no floor (return all overdue), 0 means today only, N means N days back
+          let overdueFloorDate: string | null = null
+          if (overdue_floor_days >= 0) {
+            const floorDate = new Date()
+            floorDate.setDate(floorDate.getDate() - overdue_floor_days)
+            overdueFloorDate = floorDate.toISOString().split('T')[0]
+          }
+
           const allTasks: any[] = []
           let workspaceName = 'unknown'
           const errors: string[] = []
@@ -1967,9 +1977,17 @@ export const unifiedTools: CustomTool[] = [
 
 
               // Build date filter with OR across all scheduling properties
-              const dateFilters = dateProperties.map(prop => ({
-                property: prop, date: { on_or_before: dueDateCutoff }
-              }))
+              // Each property gets an upper bound and optionally a lower bound (overdue floor)
+              // Note: Notion API requires separate filter objects for each condition on the same property
+              const buildDateRange = (propName: string) => {
+                const upperBound = { property: propName, date: { on_or_before: dueDateCutoff } }
+                if (overdueFloorDate) {
+                  const lowerBound = { property: propName, date: { on_or_after: overdueFloorDate } }
+                  return { and: [upperBound, lowerBound] } as any
+                }
+                return upperBound
+              }
+              const dateFilters = dateProperties.map(prop => buildDateRange(prop))
               const dateFilter = dateFilters.length === 1
                 ? dateFilters[0]
                 : { or: dateFilters }
@@ -2077,6 +2095,8 @@ export const unifiedTools: CustomTool[] = [
             workspace: debugInfo,
             date_queried: todayStr,
             days_ahead,
+            overdue_floor_days,
+            overdue_floor_date: overdueFloorDate,
             total_tasks: allTasks.length,
             summary: {
               overdue: allTasks.filter(t => t.due && t.due < todayStr).length,

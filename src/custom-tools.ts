@@ -1501,20 +1501,34 @@ export const customTools: CustomTool[] = [
           assignee: {
             type: 'string',
             description: 'Filter by assignee name. For workspaces listed in NOTION_ASSIGNEE_FILTER_WORKSPACES env var, defaults to NOTION_DEFAULT_ASSIGNEE if not specified. Use "all" to disable assignee filtering.'
+          },
+          overdue_floor_days: {
+            type: 'number',
+            description: 'Only return overdue tasks within this many days in the past (default: 60). E.g. 60 means tasks overdue by more than 60 days are excluded. Use 0 for "only today and future". Use -1 for "no floor, return all overdue tasks".',
+            default: 60
           }
         }
       }
     },
     handler: async (params, httpClient) => {
-      const { include_details = true, days_ahead = 0, assignee } = params
+      const { include_details = true, days_ahead = 0, assignee, overdue_floor_days = 60 } = params
 
       // Get Tasks data_source IDs from env vars with fallback to defaults
       const TASKS_DATASOURCES = getAllDataSourceIds('tasks')
 
-      // Calculate the due date cutoff
+      // Calculate the due date cutoff (upper bound)
       const today = new Date()
       today.setDate(today.getDate() + days_ahead)
       const dueDateCutoff = today.toISOString().split('T')[0]
+
+      // Calculate the overdue floor date (lower bound)
+      // -1 means no floor (return all overdue), 0 means today only, N means N days back
+      let overdueFloorDate: string | null = null
+      if (overdue_floor_days >= 0) {
+        const floorDate = new Date()
+        floorDate.setDate(floorDate.getDate() - overdue_floor_days)
+        overdueFloorDate = floorDate.toISOString().split('T')[0]
+      }
 
       const allTasks: any[] = []
       let workspaceName = 'unknown'
@@ -1605,10 +1619,20 @@ export const customTools: CustomTool[] = [
 
           // Build the date filter - check both Due/Deadline and Work Session properties
           // Using "or" to catch tasks scheduled in either property
+          // Each date property gets an upper bound (on_or_before) and optionally a lower bound (on_or_after)
+          // Note: Notion API requires separate filter objects for each condition on the same property
+          const buildDateRange = (propName: string) => {
+            const upperBound = { property: propName, date: { on_or_before: dueDateCutoff } }
+            if (overdueFloorDate) {
+              const lowerBound = { property: propName, date: { on_or_after: overdueFloorDate } }
+              return { and: [upperBound, lowerBound] }
+            }
+            return upperBound
+          }
           const dateFilter = {
             or: [
-              { property: duePropertyName, date: { on_or_before: dueDateCutoff } },
-              { property: 'Work Session', date: { on_or_before: dueDateCutoff } }
+              buildDateRange(duePropertyName),
+              buildDateRange('Work Session')
             ]
           }
 
@@ -1782,6 +1806,8 @@ export const customTools: CustomTool[] = [
         workspace: workspaceName,
         date_queried: todayStr,
         days_ahead,
+        overdue_floor_days,
+        overdue_floor_date: overdueFloorDate,
         assignee_filter: assigneeFilterApplied ? assignee || (usedDefaultAssignee ? `${usedDefaultAssignee} (default)` : null) : null,
         total_tasks: allTasks.length,
         summary: {
