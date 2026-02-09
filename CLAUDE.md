@@ -591,6 +591,13 @@ Dynamic resources:
 
 ## Changelog
 
+### 2026-02-08: overdue_floor_days Parameter
+
+- **Added:** `overdue_floor_days` parameter (default: 60) to both legacy `get-due-tasks` tool and unified `notion-database` `get-due-tasks` action
+- **Purpose:** Prevents ancient overdue tasks (2023+) from filling up scheduler/briefing results
+- **Values:** Positive number = days back, `0` = only today and future, `-1` = no floor (all overdue, backwards-compatible)
+- **Response:** Includes `overdue_floor_days` and `overdue_floor_date` in output for transparency
+
 ### 2026-02-02: API Limitation Documentation
 
 - **Documented:** View filters, sorts, and tabs are NOT accessible via Notion API
