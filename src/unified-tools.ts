@@ -1987,11 +1987,6 @@ export const unifiedTools: CustomTool[] = [
                 }
                 return upperBound
               }
-              const dateFilters = dateProperties.map(prop => buildDateRange(prop))
-              const dateFilter = dateFilters.length === 1
-                ? dateFilters[0]
-                : { or: dateFilters }
-
               // Build status filter
               const statusFilter = {
                 and: [
@@ -2001,27 +1996,55 @@ export const unifiedTools: CustomTool[] = [
                 ]
               }
 
-              // 2025-09-03 API: Use data_source ID directly, fall back to database ID if needed
-              let queryResponse
-              try {
-                queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${dsId}/query`, {
-                  filter: { and: [dateFilter, statusFilter] },
-                  sorts: [{ property: dateProperties[0], direction: 'ascending' }],
-                  page_size: 50
-                })
-              } catch {
-                // Fallback: Try legacy database ID env var
-                const legacyDbId = getDatabaseId('tasks', ws)
-                if (!legacyDbId) continue
-                queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${legacyDbId}/query`, {
-                  filter: { and: [dateFilter, statusFilter] },
-                  sorts: [{ property: dateProperties[0], direction: 'ascending' }],
-                  page_size: 50
-                })
+              // When multiple date properties + overdue floor active, Notion API rejects
+              // nested compound filters: { or: [{ and: [...] }, { and: [...] }] }
+              // Fix: run separate queries per date property and merge/dedup results
+              const needsMultiQuery = dateProperties.length > 1 && !!overdueFloorDate
+
+              const runQuery = async (filter: any, targetDsId: string) => {
+                try {
+                  return await httpClient.rawRequest('post', `/v1/data_sources/${targetDsId}/query`, {
+                    filter,
+                    sorts: [{ property: dateProperties[0], direction: 'ascending' }],
+                    page_size: 50
+                  })
+                } catch {
+                  const legacyDbId = getDatabaseId('tasks', ws)
+                  if (!legacyDbId) return null
+                  return await httpClient.rawRequest('post', `/v1/data_sources/${legacyDbId}/query`, {
+                    filter,
+                    sorts: [{ property: dateProperties[0], direction: 'ascending' }],
+                    page_size: 50
+                  })
+                }
+              }
+
+              let tasks: any[]
+              if (needsMultiQuery) {
+                const seenIds = new Set<string>()
+                tasks = []
+                for (const dateProp of dateProperties) {
+                  const filter = { and: [buildDateRange(dateProp), statusFilter] }
+                  const resp = await runQuery(filter, dsId)
+                  if (!resp) continue
+                  for (const t of (resp.data.results || [])) {
+                    if (!seenIds.has(t.id)) {
+                      seenIds.add(t.id)
+                      tasks.push(t)
+                    }
+                  }
+                }
+              } else {
+                const dateFilters = dateProperties.map(prop => buildDateRange(prop))
+                const dateFilter = dateFilters.length === 1
+                  ? dateFilters[0]
+                  : { or: dateFilters }
+                const resp = await runQuery({ and: [dateFilter, statusFilter] }, dsId)
+                if (!resp) continue
+                tasks = resp.data.results || []
               }
 
               workspaceName = ws
-              const tasks = queryResponse.data.results || []
 
               for (const task of tasks) {
                 let title = ''

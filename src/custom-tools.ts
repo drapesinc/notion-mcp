@@ -1629,13 +1629,6 @@ export const customTools: CustomTool[] = [
             }
             return upperBound
           }
-          const dateFilter = {
-            or: [
-              buildDateRange(duePropertyName),
-              buildDateRange('Work Session')
-            ]
-          }
-
           // Build the status filter using detected property name
           const statusFilter = {
             and: [
@@ -1645,37 +1638,70 @@ export const customTools: CustomTool[] = [
             ]
           }
 
-          // Build the main filter combining date, status, and optionally assignee
-          const filterConditions: any[] = [dateFilter, statusFilter]
-
+          // Build base filter conditions (status + optional assignee)
+          const baseConditions: any[] = [statusFilter]
           if (resolvedAssigneeId) {
-            filterConditions.push({
+            baseConditions.push({
               property: 'Assignee',
               people: { contains: resolvedAssigneeId }
             })
           }
 
-          const queryFilter = {
-            filter: { and: filterConditions },
-            sorts: [{ property: 'Due', direction: 'ascending' }],
-            page_size: 50
+          const dateProperties = [duePropertyName, 'Work Session']
+
+          // When multiple date properties + overdue floor active, Notion API rejects
+          // nested compound filters: { or: [{ and: [...] }, { and: [...] }] }
+          // Fix: run separate queries per date property and merge/dedup results
+          const needsMultiQuery = !!overdueFloorDate
+
+          const runQuery = async (filter: any, targetDsId: string) => {
+            try {
+              return await httpClient.rawRequest('post', `/v1/data_sources/${targetDsId}/query`, {
+                filter,
+                sorts: [{ property: 'Due', direction: 'ascending' }],
+                page_size: 50
+              })
+            } catch {
+              const legacyDbId = getDatabaseId('tasks', ws)
+              if (!legacyDbId) return null
+              return await httpClient.rawRequest('post', `/v1/data_sources/${legacyDbId}/query`, {
+                filter,
+                sorts: [{ property: 'Due', direction: 'ascending' }],
+                page_size: 50
+              })
+            }
           }
 
-          // 2025-09-03 API: Use data_source ID directly, fall back to database ID if needed
-          let queryResponse
-          try {
-            queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${dsId}/query`, queryFilter)
-          } catch {
-            // Fallback: Try legacy database ID env var
-            const legacyDbId = getDatabaseId('tasks', ws)
-            if (!legacyDbId) continue
-            // In 2025-09-03 API, the "database ID" is actually the data source ID
-            queryResponse = await httpClient.rawRequest('post', `/v1/data_sources/${legacyDbId}/query`, queryFilter)
+          let tasks: any[]
+          if (needsMultiQuery) {
+            const seenIds = new Set<string>()
+            tasks = []
+            for (const dateProp of dateProperties) {
+              const filter = { and: [buildDateRange(dateProp), ...baseConditions] }
+              const resp = await runQuery(filter, dsId)
+              if (!resp) continue
+              for (const t of (resp.data.results || [])) {
+                if (!seenIds.has(t.id)) {
+                  seenIds.add(t.id)
+                  tasks.push(t)
+                }
+              }
+            }
+          } else {
+            const dateFilter = {
+              or: [
+                buildDateRange(duePropertyName),
+                buildDateRange('Work Session')
+              ]
+            }
+            const filter = { and: [dateFilter, ...baseConditions] }
+            const resp = await runQuery(filter, dsId)
+            if (!resp) continue
+            tasks = resp.data.results || []
           }
 
           // Successfully queried this workspace
           workspaceName = ws
-          const tasks = queryResponse.data.results || []
 
           for (const task of tasks) {
             // Extract properties
