@@ -1013,9 +1013,27 @@ export const customTools: CustomTool[] = [
       // Build properties object
       const properties: any = {}
 
+      // Discover the actual title property name from the data source schema
+      // Different workspaces use different names (e.g. "Task", "Name")
+      let titlePropertyName = 'title' // default fallback
+      if (data_source_id) {
+        try {
+          const schemaResponse = await httpClient.rawRequest('get', `/v1/data_sources/${data_source_id}`, {})
+          const schemaProps = schemaResponse.data?.properties || {}
+          for (const [propName, propDef] of Object.entries(schemaProps)) {
+            if ((propDef as any).type === 'title') {
+              titlePropertyName = propName
+              break
+            }
+          }
+        } catch {
+          // Fall back to 'title' if schema fetch fails
+        }
+      }
+
       // Add title (required for new, optional for update)
       if (title) {
-        properties.title = {
+        properties[titlePropertyName] = {
           title: textToRichText(title)
         }
       } else if (!isUpdate) {

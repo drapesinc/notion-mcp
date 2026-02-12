@@ -765,7 +765,7 @@ async function resolvePropertiesWithFuzzyMatch(
   properties: Record<string, any>,
   databaseId: string,
   httpClient: any
-): Promise<{ resolved: Record<string, any>; warnings: string[] }> {
+): Promise<{ resolved: Record<string, any>; warnings: string[]; titlePropertyName: string | null }> {
   const warnings: string[] = []
   const resolved = { ...properties }
 
@@ -780,7 +780,16 @@ async function resolvePropertiesWithFuzzyMatch(
   } catch (error: any) {
     // If we can't fetch schema, return properties as-is with detailed error
     const errMsg = error?.data?.message || error?.message || 'Unknown error'
-    return { resolved, warnings: [`Could not fetch database schema for fuzzy matching: ${errMsg}`] }
+    return { resolved, warnings: [`Could not fetch database schema for fuzzy matching: ${errMsg}`], titlePropertyName: null }
+  }
+
+  // Discover the actual title property name from the schema
+  let titlePropertyName: string | null = null
+  for (const [propName, propDef] of Object.entries(schema)) {
+    if ((propDef as any).type === 'title') {
+      titlePropertyName = propName
+      break
+    }
   }
 
   for (const [propName, propValue] of Object.entries(resolved)) {
@@ -861,7 +870,7 @@ async function resolvePropertiesWithFuzzyMatch(
     }
   }
 
-  return { resolved, warnings }
+  return { resolved, warnings, titlePropertyName }
 }
 
 // ============================================================================
@@ -990,12 +999,15 @@ export const unifiedTools: CustomTool[] = [
 
           let resolvedProperties = properties || {}
           let fuzzyWarnings: string[] = []
+          let titlePropertyName: string | null = null
 
-          // Apply fuzzy matching for multi-select/status/select properties
-          if (data_source_id && Object.keys(resolvedProperties).length > 0) {
+          // Always fetch schema when data_source_id is provided to discover the title property name
+          // and apply fuzzy matching for multi-select/status/select properties
+          if (data_source_id) {
             const fuzzyResult = await resolvePropertiesWithFuzzyMatch(resolvedProperties, data_source_id, httpClient)
             resolvedProperties = fuzzyResult.resolved
             fuzzyWarnings = fuzzyResult.warnings
+            titlePropertyName = fuzzyResult.titlePropertyName
           }
 
           // Parse icon if provided
@@ -1007,8 +1019,11 @@ export const unifiedTools: CustomTool[] = [
             if (iconResult.error) iconWarning = iconResult.error
           }
 
+          // Use the actual title property name from the schema (e.g. "Task", "Name")
+          // Fall back to "title" for page parents or if schema fetch failed
+          const titleKey = titlePropertyName || 'title'
           const createProps: any = {
-            title: { title: textToRichText(title) },
+            [titleKey]: { title: textToRichText(title) },
             ...resolvedProperties
           }
 
