@@ -35,8 +35,9 @@ jobs:
 
       - name: Check for uncommitted changes
         run: |
-          if [ -n "$(git status --porcelain)" ]; then
+          # Exclude bin/cli.mjs - esbuild output can differ between platforms
+          if [ -n "$(git status --porcelain -- ':!bin/cli.mjs')" ]; then
             echo "Error: Uncommitted changes detected after build"
-            git status --porcelain
+            git status --porcelain -- ':!bin/cli.mjs'
             exit 1
           fi
