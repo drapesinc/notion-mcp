@@ -10,7 +10,7 @@ describe('Unified Tools - notion-page', () => {
 
   beforeEach(() => {
     mockHttpClient = {
-      call: vi.fn(),
+      executeOperation: vi.fn(),
       rawRequest: vi.fn(),
     }
   })
@@ -19,13 +19,16 @@ describe('Unified Tools - notion-page', () => {
     it('should get a page with basic properties', async () => {
       const mockPage = {
         id: 'page-123',
-        properties: { Name: { title: [{ plain_text: 'Test Page' }] } },
+        properties: { Name: { type: 'title', title: [{ plain_text: 'Test Page' }] } },
         url: 'https://notion.so/page-123',
       }
 
-      mockHttpClient.call.mockResolvedValue(mockPage)
+      // First call: retrieve page; Second call: get blocks (include_blocks defaults to true)
+      mockHttpClient.executeOperation
+        .mockResolvedValueOnce({ data: mockPage })
+        .mockResolvedValueOnce({ data: { results: [] } })
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-page')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-page')!
       const result = await tool.handler(
         { action: 'get', page_id: 'page-123' },
         mockHttpClient
@@ -33,17 +36,16 @@ describe('Unified Tools - notion-page', () => {
 
       expect(result.success).toBe(true)
       expect(result.id).toBe('page-123')
-      expect(mockHttpClient.call).toHaveBeenCalledWith(
-        'retrieve-a-page',
-        { page_id: 'page-123' },
-        expect.any(Object)
+      expect(mockHttpClient.executeOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: 'retrieve-a-page' }),
+        { page_id: 'page-123' }
       )
     })
 
     it('should get a page with blocks', async () => {
       const mockPage = {
         id: 'page-123',
-        properties: { Name: { title: [{ plain_text: 'Test Page' }] } },
+        properties: { Name: { type: 'title', title: [{ plain_text: 'Test Page' }] } },
       }
 
       const mockBlocks = {
@@ -55,11 +57,11 @@ describe('Unified Tools - notion-page', () => {
         ],
       }
 
-      mockHttpClient.call
-        .mockResolvedValueOnce(mockPage)
-        .mockResolvedValueOnce(mockBlocks)
+      mockHttpClient.executeOperation
+        .mockResolvedValueOnce({ data: mockPage })
+        .mockResolvedValueOnce({ data: mockBlocks })
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-page')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-page')!
       const result = await tool.handler(
         { action: 'get', page_id: 'page-123', include_blocks: true },
         mockHttpClient
@@ -71,16 +73,14 @@ describe('Unified Tools - notion-page', () => {
     })
 
     it('should handle API errors gracefully', async () => {
-      mockHttpClient.call.mockRejectedValue(new Error('Page not found'))
+      mockHttpClient.executeOperation.mockRejectedValue(new Error('Page not found'))
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-page')!
-      const result = await tool.handler(
-        { action: 'get', page_id: 'invalid-id' },
-        mockHttpClient
-      )
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-page')!
 
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('Page not found')
+      // The handler does not catch errors internally; they propagate to the proxy layer
+      await expect(
+        tool.handler({ action: 'get', page_id: 'invalid-id' }, mockHttpClient)
+      ).rejects.toThrow('Page not found')
     })
   })
 
@@ -89,16 +89,28 @@ describe('Unified Tools - notion-page', () => {
       const mockCreatedPage = {
         id: 'new-page-123',
         url: 'https://notion.so/new-page-123',
-        properties: { Name: { title: [{ plain_text: 'New Task' }] } },
+        properties: { Name: { type: 'title', title: [{ plain_text: 'New Task' }] } },
       }
 
-      mockHttpClient.call.mockResolvedValue(mockCreatedPage)
+      // resolvePropertiesWithFuzzyMatch fetches schema via executeOperation
+      // Then the page is created via executeOperation
+      mockHttpClient.executeOperation
+        .mockResolvedValueOnce({
+          data: {
+            id: 'ds-123',
+            properties: {
+              Name: { type: 'title', id: 'title' },
+              Status: { type: 'status', id: 'status', status: { options: [{ name: 'To Do' }], groups: [] } },
+            },
+          },
+        }) // Schema fetch (resolvePropertiesWithFuzzyMatch)
+        .mockResolvedValueOnce({ data: mockCreatedPage }) // Create page
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-page')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-page')!
       const result = await tool.handler(
         {
           action: 'create',
-          database_id: 'db-123',
+          data_source_id: 'ds-123',
           title: 'New Task',
           properties: { Status: { status: { name: 'To Do' } } },
         },
@@ -116,16 +128,27 @@ describe('Unified Tools - notion-page', () => {
         url: 'https://notion.so/new-page-456',
       }
 
-      mockHttpClient.rawRequest.mockResolvedValue({
+      // Schema fetch via executeOperation (resolvePropertiesWithFuzzyMatch)
+      mockHttpClient.executeOperation.mockResolvedValueOnce({
+        data: {
+          id: 'ds-123',
+          properties: {
+            Name: { type: 'title', id: 'title' },
+          },
+        },
+      })
+
+      // Template creation via rawRequest
+      mockHttpClient.rawRequest.mockResolvedValueOnce({
         data: mockCreatedPage,
         status: 200,
       })
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-page')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-page')!
       const result = await tool.handler(
         {
           action: 'create',
-          database_id: 'db-123',
+          data_source_id: 'ds-123',
           title: 'Task from Template',
           template_id: 'template-123',
         },
@@ -134,16 +157,16 @@ describe('Unified Tools - notion-page', () => {
 
       expect(result.success).toBe(true)
       expect(result.page_id).toBe('new-page-456')
+      // Verify template rawRequest was called
       expect(mockHttpClient.rawRequest).toHaveBeenCalledWith(
         'post',
         '/v1/pages',
         expect.objectContaining({
           template: {
+            type: 'template_id',
             template_id: 'template-123',
-            template_data_type: 'page',
           },
-        }),
-        expect.any(Object)
+        })
       )
     })
 
@@ -153,15 +176,26 @@ describe('Unified Tools - notion-page', () => {
         url: 'https://notion.so/new-page-789',
       }
 
-      mockHttpClient.call
-        .mockResolvedValueOnce(mockCreatedPage)
-        .mockResolvedValueOnce({ results: [] })
+      // 1. Schema fetch (resolvePropertiesWithFuzzyMatch via executeOperation)
+      // 2. Page create (executeOperation)
+      // 3. Block append (executeOperation)
+      mockHttpClient.executeOperation
+        .mockResolvedValueOnce({
+          data: {
+            id: 'ds-123',
+            properties: {
+              Name: { type: 'title', id: 'title' },
+            },
+          },
+        }) // Schema fetch
+        .mockResolvedValueOnce({ data: mockCreatedPage }) // Create page
+        .mockResolvedValueOnce({ data: { results: [] } }) // Append blocks
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-page')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-page')!
       const result = await tool.handler(
         {
           action: 'create',
-          database_id: 'db-123',
+          data_source_id: 'ds-123',
           title: 'Page with Content',
           initial_content: 'h1: Header\n- Bullet point\n[] Todo item',
         },
@@ -169,26 +203,43 @@ describe('Unified Tools - notion-page', () => {
       )
 
       expect(result.success).toBe(true)
-      expect(mockHttpClient.call).toHaveBeenCalledWith(
-        'append-block-children',
+      expect(mockHttpClient.executeOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: 'patch-block-children' }),
         expect.objectContaining({
           block_id: 'new-page-789',
-        }),
-        expect.any(Object)
+        })
       )
     })
   })
 
   describe('action: update', () => {
     it('should update page properties', async () => {
-      const mockUpdatedPage = {
+      const mockCurrentPage = {
         id: 'page-123',
-        properties: { Status: { status: { name: 'Done' } } },
+        parent: { database_id: 'db-123' },
+        properties: { Status: { type: 'status', status: { name: 'To Do' } } },
       }
 
-      mockHttpClient.call.mockResolvedValue(mockUpdatedPage)
+      const mockUpdatedPage = {
+        id: 'page-123',
+        url: 'https://notion.so/page-123',
+        properties: { Status: { type: 'status', status: { name: 'Done' } } },
+      }
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-page')!
+      // Sequence: 1) fetch page, 2) fetch schema (fuzzy matching), 3) update page
+      mockHttpClient.executeOperation
+        .mockResolvedValueOnce({ data: mockCurrentPage }) // Fetch page for relations/fuzzy
+        .mockResolvedValueOnce({
+          data: {
+            id: 'db-123',
+            properties: {
+              Status: { type: 'status', id: 'status', status: { options: [{ name: 'Done' }], groups: [] } },
+            },
+          },
+        }) // Schema fetch (resolvePropertiesWithFuzzyMatch)
+        .mockResolvedValueOnce({ data: mockUpdatedPage }) // Update page
+
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-page')!
       const result = await tool.handler(
         {
           action: 'update',
@@ -205,15 +256,18 @@ describe('Unified Tools - notion-page', () => {
     it('should append relations', async () => {
       const mockCurrentPage = {
         id: 'page-123',
+        parent: { type: 'page_id', page_id: 'parent-page' },
         properties: {
-          Projects: { relation: [{ id: 'existing-project' }] },
+          Projects: { type: 'relation', relation: [{ id: 'existing-project' }] },
         },
       }
 
       const mockUpdatedPage = {
         id: 'page-123',
+        url: 'https://notion.so/page-123',
         properties: {
           Projects: {
+            type: 'relation',
             relation: [
               { id: 'existing-project' },
               { id: 'new-project' },
@@ -222,11 +276,11 @@ describe('Unified Tools - notion-page', () => {
         },
       }
 
-      mockHttpClient.call
-        .mockResolvedValueOnce(mockCurrentPage)
-        .mockResolvedValueOnce(mockUpdatedPage)
+      mockHttpClient.executeOperation
+        .mockResolvedValueOnce({ data: mockCurrentPage }) // Fetch page
+        .mockResolvedValueOnce({ data: mockUpdatedPage }) // Update page
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-page')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-page')!
       const result = await tool.handler(
         {
           action: 'update',
@@ -239,30 +293,24 @@ describe('Unified Tools - notion-page', () => {
       )
 
       expect(result.success).toBe(true)
-      expect(mockHttpClient.call).toHaveBeenCalledWith(
-        'update-page-properties',
+      expect(mockHttpClient.executeOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: 'patch-page' }),
         expect.objectContaining({
-          properties: {
+          properties: expect.objectContaining({
             Projects: {
               relation: [{ id: 'existing-project' }, { id: 'new-project' }],
             },
-          },
-        }),
-        expect.any(Object)
+          }),
+        })
       )
     })
   })
 
   describe('action: delete', () => {
     it('should archive a page', async () => {
-      const mockArchivedPage = {
-        id: 'page-123',
-        archived: true,
-      }
+      mockHttpClient.executeOperation.mockResolvedValue({ data: { id: 'page-123', archived: true } })
 
-      mockHttpClient.call.mockResolvedValue(mockArchivedPage)
-
-      const tool = unifiedTools.find((t) => t.name === 'notion-page')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-page')!
       const result = await tool.handler(
         { action: 'delete', page_id: 'page-123' },
         mockHttpClient
@@ -279,7 +327,7 @@ describe('Unified Tools - notion-blocks', () => {
 
   beforeEach(() => {
     mockHttpClient = {
-      call: vi.fn(),
+      executeOperation: vi.fn(),
     }
   })
 
@@ -301,9 +349,9 @@ describe('Unified Tools - notion-blocks', () => {
         has_more: false,
       }
 
-      mockHttpClient.call.mockResolvedValue(mockBlocks)
+      mockHttpClient.executeOperation.mockResolvedValue({ data: mockBlocks })
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-blocks')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-blocks')!
       const result = await tool.handler(
         { action: 'get', page_id: 'page-123' },
         mockHttpClient
@@ -316,9 +364,9 @@ describe('Unified Tools - notion-blocks', () => {
 
   describe('action: append', () => {
     it('should append structured content', async () => {
-      mockHttpClient.call.mockResolvedValue({ results: [] })
+      mockHttpClient.executeOperation.mockResolvedValue({ data: { results: [] } })
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-blocks')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-blocks')!
       const result = await tool.handler(
         {
           action: 'append',
@@ -329,8 +377,8 @@ describe('Unified Tools - notion-blocks', () => {
       )
 
       expect(result.success).toBe(true)
-      expect(mockHttpClient.call).toHaveBeenCalledWith(
-        'append-block-children',
+      expect(mockHttpClient.executeOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ operationId: 'patch-block-children' }),
         expect.objectContaining({
           children: expect.arrayContaining([
             expect.objectContaining({ type: 'heading_1' }),
@@ -339,21 +387,15 @@ describe('Unified Tools - notion-blocks', () => {
             expect.objectContaining({ type: 'quote' }),
             expect.objectContaining({ type: 'callout' }),
           ]),
-        }),
-        expect.any(Object)
+        })
       )
     })
   })
 
   describe('action: complete-todo', () => {
-    it('should complete a todo item and log it', async () => {
+    it('should complete a todo item', async () => {
       const mockBlocks = {
         results: [
-          {
-            id: 'todo-section',
-            type: 'callout',
-            callout: { rich_text: [{ plain_text: 'To Do' }] },
-          },
           {
             id: 'todo-1',
             type: 'to_do',
@@ -365,12 +407,11 @@ describe('Unified Tools - notion-blocks', () => {
         ],
       }
 
-      mockHttpClient.call
-        .mockResolvedValueOnce(mockBlocks) // Get blocks
-        .mockResolvedValueOnce({}) // Update todo
-        .mockResolvedValueOnce({ results: [] }) // Append log
+      mockHttpClient.executeOperation
+        .mockResolvedValueOnce({ data: mockBlocks }) // Get blocks
+        .mockResolvedValueOnce({ data: {} }) // Update todo (check it)
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-blocks')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-blocks')!
       const result = await tool.handler(
         {
           action: 'complete-todo',
@@ -381,7 +422,7 @@ describe('Unified Tools - notion-blocks', () => {
       )
 
       expect(result.success).toBe(true)
-      expect(result.message).toContain('completed and logged')
+      expect(result.completed_item).toBe('Complete this task')
     })
   })
 })
@@ -391,27 +432,29 @@ describe('Unified Tools - notion-database', () => {
 
   beforeEach(() => {
     mockHttpClient = {
-      call: vi.fn(),
+      executeOperation: vi.fn(),
+      rawRequest: vi.fn(),
     }
   })
 
   describe('action: get', () => {
     it('should get database schema', async () => {
       const mockDatabase = {
-        id: 'db-123',
+        id: 'ds-123',
         title: [{ plain_text: 'Tasks' }],
+        url: 'https://notion.so/ds-123',
         properties: {
-          Name: { type: 'title' },
-          Status: { type: 'status' },
-          Due: { type: 'date' },
+          Name: { type: 'title', id: 'title' },
+          Status: { type: 'status', id: 'status' },
+          Due: { type: 'date', id: 'date' },
         },
       }
 
-      mockHttpClient.call.mockResolvedValue(mockDatabase)
+      mockHttpClient.rawRequest.mockResolvedValue({ data: mockDatabase })
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-database')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-database')!
       const result = await tool.handler(
-        { action: 'get', database_id: 'db-123' },
+        { action: 'get', data_source_id: 'ds-123' },
         mockHttpClient
       )
 
@@ -430,13 +473,13 @@ describe('Unified Tools - notion-database', () => {
         has_more: false,
       }
 
-      mockHttpClient.call.mockResolvedValue(mockResults)
+      mockHttpClient.rawRequest.mockResolvedValue({ data: mockResults })
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-database')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-database')!
       const result = await tool.handler(
         {
           action: 'query',
-          database_id: 'db-123',
+          data_source_id: 'ds-123',
           filter: {
             property: 'Status',
             status: { equals: 'To Do' },
@@ -452,29 +495,51 @@ describe('Unified Tools - notion-database', () => {
 
   describe('action: get-due-tasks', () => {
     it('should fetch due tasks with filters', async () => {
+      const mockSchema = {
+        id: 'ds-tasks',
+        properties: {
+          Name: { type: 'title', id: 'title' },
+          Due: { type: 'date', id: 'due' },
+          Status: { type: 'status', id: 'status', status: { options: [{ name: 'To Do' }, { name: 'Done' }], groups: [{ name: 'Complete', option_ids: [] }] } },
+        },
+      }
+
       const mockResults = {
         results: [
           {
             id: 'task-1',
+            url: 'https://notion.so/task-1',
             properties: {
-              Name: { title: [{ plain_text: 'Overdue Task' }] },
-              Due: { date: { start: '2025-01-01' } },
-              Status: { status: { name: 'To Do' } },
+              Name: { type: 'title', title: [{ plain_text: 'Overdue Task' }] },
+              Due: { type: 'date', date: { start: '2025-01-01' } },
+              Status: { type: 'status', status: { name: 'To Do' } },
             },
           },
         ],
       }
 
-      mockHttpClient.call.mockResolvedValue(mockResults)
+      // Set env var for the handler to discover
+      process.env.NOTION_DS_TASKS_PERSONAL = 'ds-tasks'
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-database')!
+      // Sequence: 1) rawRequest for schema, 2) rawRequest for query
+      mockHttpClient.rawRequest
+        .mockResolvedValueOnce({ data: mockSchema }) // Schema fetch
+        .mockResolvedValueOnce({ data: mockResults }) // Query
+
+      // 3) executeOperation for block children (include_details defaults to true)
+      mockHttpClient.executeOperation
+        .mockResolvedValueOnce({ data: { results: [] } }) // Blocks for task-1
+
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-database')!
       const result = await tool.handler(
         { action: 'get-due-tasks', workspace: 'personal' },
         mockHttpClient
       )
 
       expect(result.success).toBe(true)
-      expect(result.count).toBeGreaterThan(0)
+      expect(result.total_tasks).toBeGreaterThan(0)
+
+      delete process.env.NOTION_DS_TASKS_PERSONAL
     })
   })
 })
@@ -484,7 +549,7 @@ describe('Unified Tools - notion-search', () => {
 
   beforeEach(() => {
     mockHttpClient = {
-      call: vi.fn(),
+      executeOperation: vi.fn(),
     }
   })
 
@@ -494,28 +559,32 @@ describe('Unified Tools - notion-search', () => {
         {
           id: 'page-1',
           object: 'page',
+          url: 'https://notion.so/page-1',
+          last_edited_time: '2025-01-01T00:00:00Z',
           properties: {
-            Name: { title: [{ plain_text: 'Test Page' }] },
+            Name: { type: 'title', title: [{ plain_text: 'Test Page' }] },
           },
         },
         {
           id: 'db-1',
           object: 'database',
+          url: 'https://notion.so/db-1',
           title: [{ plain_text: 'Test Database' }],
+          properties: { Name: { type: 'title' } },
         },
       ],
     }
 
-    mockHttpClient.call.mockResolvedValue(mockResults)
+    mockHttpClient.executeOperation.mockResolvedValue({ data: mockResults })
 
-    const tool = unifiedTools.find((t) => t.name === 'notion-search')!
+    const tool = unifiedTools.find((t) => t.definition.name === 'notion-search')!
     const result = await tool.handler(
       { query: 'test', limit: 10 },
       mockHttpClient
     )
 
     expect(result.success).toBe(true)
-    expect(result.count).toBe(2)
+    expect(result.total_results).toBe(2)
     expect(result.results).toBeDefined()
   })
 })
@@ -525,7 +594,7 @@ describe('Unified Tools - notion-comments', () => {
 
   beforeEach(() => {
     mockHttpClient = {
-      call: vi.fn(),
+      executeOperation: vi.fn(),
     }
   })
 
@@ -537,13 +606,14 @@ describe('Unified Tools - notion-comments', () => {
             id: 'comment-1',
             rich_text: [{ plain_text: 'Great work!' }],
             created_time: '2025-01-01T00:00:00Z',
+            created_by: { id: 'user-1' },
           },
         ],
       }
 
-      mockHttpClient.call.mockResolvedValue(mockComments)
+      mockHttpClient.executeOperation.mockResolvedValue({ data: mockComments })
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-comments')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-comments')!
       const result = await tool.handler(
         { action: 'get', page_id: 'page-123' },
         mockHttpClient
@@ -561,9 +631,9 @@ describe('Unified Tools - notion-comments', () => {
         rich_text: [{ plain_text: 'New comment' }],
       }
 
-      mockHttpClient.call.mockResolvedValue(mockComment)
+      mockHttpClient.executeOperation.mockResolvedValue({ data: mockComment })
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-comments')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-comments')!
       const result = await tool.handler(
         {
           action: 'create',
@@ -574,7 +644,7 @@ describe('Unified Tools - notion-comments', () => {
       )
 
       expect(result.success).toBe(true)
-      expect(result.action).toBe('created')
+      expect(result.comment_id).toBe('comment-2')
     })
   })
 })
@@ -584,7 +654,7 @@ describe('Unified Tools - notion-users', () => {
 
   beforeEach(() => {
     mockHttpClient = {
-      call: vi.fn(),
+      executeOperation: vi.fn(),
     }
   })
 
@@ -601,9 +671,9 @@ describe('Unified Tools - notion-users', () => {
         ],
       }
 
-      mockHttpClient.call.mockResolvedValue(mockUsers)
+      mockHttpClient.executeOperation.mockResolvedValue({ data: mockUsers })
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-users')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-users')!
       const result = await tool.handler({ action: 'list' }, mockHttpClient)
 
       expect(result.success).toBe(true)
@@ -619,9 +689,9 @@ describe('Unified Tools - notion-users', () => {
         type: 'person',
       }
 
-      mockHttpClient.call.mockResolvedValue(mockUser)
+      mockHttpClient.executeOperation.mockResolvedValue({ data: mockUser })
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-users')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-users')!
       const result = await tool.handler(
         { action: 'get', user_id: 'user-1' },
         mockHttpClient
@@ -638,15 +708,16 @@ describe('Unified Tools - notion-users', () => {
         id: 'bot-1',
         name: 'Integration Bot',
         type: 'bot',
+        bot: { owner: { type: 'workspace' } },
       }
 
-      mockHttpClient.call.mockResolvedValue(mockBotUser)
+      mockHttpClient.executeOperation.mockResolvedValue({ data: mockBotUser })
 
-      const tool = unifiedTools.find((t) => t.name === 'notion-users')!
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-users')!
       const result = await tool.handler({ action: 'me' }, mockHttpClient)
 
       expect(result.success).toBe(true)
-      expect(result.user.type).toBe('bot')
+      expect(result.bot.id).toBe('bot-1')
     })
   })
 })

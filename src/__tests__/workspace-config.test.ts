@@ -11,6 +11,14 @@ describe('Workspace Configuration', () => {
 
   beforeEach(() => {
     originalEnv = { ...process.env }
+    // Clear all Notion token env vars to prevent leakage from the real environment
+    delete process.env.NOTION_TOKEN
+    delete process.env.NOTION_DEFAULT_WORKSPACE
+    Object.keys(process.env).forEach((key) => {
+      if (key.startsWith('NOTION_TOKEN_')) {
+        delete process.env[key]
+      }
+    })
   })
 
   afterEach(() => {
@@ -66,7 +74,7 @@ describe('Workspace Configuration', () => {
       const config = loadWorkspaceConfig()
 
       expect(config.workspaces.size).toBe(0)
-      expect(config.defaultWorkspace).toBe('')
+      expect(config.defaultWorkspace).toBeNull()
     })
 
     it('should normalize workspace names to lowercase', () => {
@@ -96,6 +104,7 @@ describe('Workspace Configuration', () => {
       const workspace = {
         name: 'personal',
         token: 'test-token-123',
+        envVar: 'NOTION_TOKEN_PERSONAL',
       }
 
       const headers = getWorkspaceHeaders(workspace)
@@ -108,6 +117,7 @@ describe('Workspace Configuration', () => {
       const workspace = {
         name: 'test',
         token: 'token',
+        envVar: 'NOTION_TOKEN_TEST',
       }
 
       const headers = getWorkspaceHeaders(workspace)
@@ -120,22 +130,22 @@ describe('Workspace Configuration', () => {
   describe('describeWorkspaceConfig', () => {
     it('should describe single workspace config', () => {
       const config: MultiWorkspaceConfig = {
-        workspaces: new Map([['personal', { name: 'personal', token: 'token-1' }]]),
+        workspaces: new Map([['personal', { name: 'personal', token: 'token-1', envVar: 'NOTION_TOKEN_PERSONAL' }]]),
         defaultWorkspace: 'personal',
       }
 
       const description = describeWorkspaceConfig(config)
 
       expect(description).toContain('personal')
-      expect(description).toContain('default')
+      expect(description).toContain('Default: personal')
     })
 
     it('should describe multiple workspace config', () => {
       const config: MultiWorkspaceConfig = {
         workspaces: new Map([
-          ['personal', { name: 'personal', token: 'token-1' }],
-          ['fourall', { name: 'fourall', token: 'token-2' }],
-          ['drapes', { name: 'drapes', token: 'token-3' }],
+          ['personal', { name: 'personal', token: 'token-1', envVar: 'NOTION_TOKEN_PERSONAL' }],
+          ['fourall', { name: 'fourall', token: 'token-2', envVar: 'NOTION_TOKEN_FOURALL' }],
+          ['drapes', { name: 'drapes', token: 'token-3', envVar: 'NOTION_TOKEN_DRAPES' }],
         ]),
         defaultWorkspace: 'personal',
       }
@@ -145,13 +155,13 @@ describe('Workspace Configuration', () => {
       expect(description).toContain('personal')
       expect(description).toContain('fourall')
       expect(description).toContain('drapes')
-      expect(description).toContain('default: personal')
+      expect(description).toContain('Default: personal')
     })
 
     it('should handle empty workspace config', () => {
       const config: MultiWorkspaceConfig = {
         workspaces: new Map(),
-        defaultWorkspace: '',
+        defaultWorkspace: null,
       }
 
       const description = describeWorkspaceConfig(config)
@@ -185,7 +195,7 @@ describe('Workspace Configuration', () => {
       const config = loadWorkspaceConfig()
 
       // Simulate tool parameter: no workspace specified
-      const defaultWorkspace = config.workspaces.get(config.defaultWorkspace)
+      const defaultWorkspace = config.workspaces.get(config.defaultWorkspace!)
       expect(defaultWorkspace).toBeDefined()
       expect(defaultWorkspace?.token).toBe('personal-token')
     })

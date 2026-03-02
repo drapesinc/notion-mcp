@@ -90,7 +90,7 @@ NOTION_ASSIGNEE_FILTER_WORKSPACES=drapes,fourall
 
 | Tool | Actions | Description |
 |------|---------|-------------|
-| `notion-page` | get, create, update, delete | Page CRUD with template support and relation modes |
+| `notion-page` | get, create, update, delete, read-markdown, create-markdown, update-markdown | Page CRUD with template support, relation modes, and Markdown Content API |
 | `notion-blocks` | get, get-block, append, update, delete, replace-section, add-activity-log, complete-todo, add-table-row, update-table-row, add-table-column | Block operations with structured content syntax, table CRUD, and appending to any container block |
 | `notion-database` | get, query, update, get-due-tasks | Data source schema, querying, and schema updates (uses `data_source_id`) |
 | `notion-search` | (query) | Search pages and data sources |
@@ -123,6 +123,18 @@ NOTION_ASSIGNEE_FILTER_WORKSPACES=drapes,fourall
 
 // Get specific block with context from URL
 { "action": "get-block", "url": "https://www.notion.so/page-2b0b4417f9cb8060b10fca928cc67725#2e0b4417f9cb80388cafd3d440c75a4b", "context_before": 2, "context_after": 2 }
+
+// Read page content as markdown (token-efficient)
+{ "action": "read-markdown", "page_id": "abc123" }
+
+// Create page with markdown body (first # h1 becomes title if title omitted)
+{ "action": "create-markdown", "parent_page_id": "parent-id", "markdown_content": "# My Page\n\nHello **world**\n\n- Item 1\n- Item 2" }
+
+// Append markdown to existing page
+{ "action": "update-markdown", "page_id": "abc123", "markdown_content": "\n## New Section\nAppended content" }
+
+// Replace specific content range
+{ "action": "update-markdown", "page_id": "abc123", "markdown_operation": "replace", "markdown_selection": "Old heading...old content", "markdown_content": "## Updated heading\nNew content" }
 ```
 
 ### Fuzzy Matching for Select Properties
@@ -590,6 +602,18 @@ Dynamic resources:
 - `notion://workflow/database/{workspace}` - Data source ID for a workspace
 
 ## Changelog
+
+### 2026-03-02: Markdown Content API
+
+- **Added:** `read-markdown`, `create-markdown`, `update-markdown` actions to `notion-page` tool
+- **API:** Uses Notion's Markdown Content API (`GET/PATCH /v1/pages/{id}/markdown`, `POST /v1/pages` with `markdown` param)
+- **Benefits:** Token-efficient content read/write — returns/accepts markdown strings instead of block arrays
+- **read-markdown:** Returns page content as Notion-flavored Markdown with `truncated` flag and `unknown_block_ids`
+- **create-markdown:** Creates pages with markdown body; first `# h1` becomes title if `title` param omitted
+- **update-markdown:** Two modes — `insert` (append or insert after selection) and `replace` (replace content range)
+- **Selection format:** `"start text...end text"` for targeting content ranges
+- **Limitations:** ~20k block truncation, unsupported blocks appear as `<unknown>`, synced pages can't be updated
+- **Implementation:** Uses `httpClient.rawRequest()` since endpoints aren't in the OpenAPI spec yet
 
 ### 2026-02-08: overdue_floor_days Parameter
 

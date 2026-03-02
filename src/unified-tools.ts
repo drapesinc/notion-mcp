@@ -884,18 +884,18 @@ export const unifiedTools: CustomTool[] = [
   {
     definition: {
       name: 'notion-page',
-      description: 'Unified page operations: get, create, update, or delete Notion pages. Supports full page retrieval with blocks, database page creation with templates, property updates with relation append/remove, and page archiving.',
+      description: 'Unified page operations: get, create, update, delete, read-markdown, create-markdown, update-markdown. Supports block-based and markdown-based content. Markdown actions use Notion\'s Markdown Content API for token-efficient reading/writing.',
       inputSchema: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['get', 'create', 'update', 'delete'],
-            description: 'The operation to perform'
+            enum: ['get', 'create', 'update', 'delete', 'read-markdown', 'create-markdown', 'update-markdown'],
+            description: 'The operation to perform. Markdown actions use Notion-flavored Markdown for efficient content handling.'
           },
           page_id: {
             type: 'string',
-            description: 'Page ID (required for get, update, delete)'
+            description: 'Page ID (required for get, update, delete, read-markdown, update-markdown)'
           },
           include_blocks: { type: 'boolean', description: 'Include page block content (default: true)', default: true },
           block_limit: { type: 'number', description: 'Max blocks to retrieve (default: 50)', default: 50 },
@@ -919,14 +919,20 @@ export const unifiedTools: CustomTool[] = [
               }
             }
           },
-          archive: { type: 'boolean', description: 'Archive instead of permanent delete', default: true }
+          archive: { type: 'boolean', description: 'Archive instead of permanent delete', default: true },
+          markdown_content: { type: 'string', description: 'Markdown content for create-markdown and update-markdown actions' },
+          markdown_operation: { type: 'string', enum: ['insert', 'replace'], description: 'For update-markdown: insert (append/insert after selection) or replace (replace content range). Default: insert' },
+          markdown_selection: { type: 'string', description: 'For update-markdown: selection text using "start text...end text" format to target where to insert after or which range to replace' },
+          allow_deleting_content: { type: 'boolean', description: 'For update-markdown replace: allow deleting child pages/databases in the replaced range. Default: false' },
+          include_transcript: { type: 'boolean', description: 'For read-markdown: include meeting note transcripts. Default: false' }
         },
         required: ['action']
       }
     },
     handler: async (params, httpClient) => {
       const { action, page_id, include_blocks = true, block_limit = 50, expand_toggles = false, max_depth = 3,
-              data_source_id, parent_page_id, title, template_id, icon, initial_content, properties = {}, relations, archive = true } = params
+              data_source_id, parent_page_id, title, template_id, icon, initial_content, properties = {}, relations, archive = true,
+              markdown_content, markdown_operation = 'insert', markdown_selection, allow_deleting_content = false, include_transcript = false } = params
 
       switch (action) {
         case 'get': {
@@ -990,6 +996,22 @@ export const unifiedTools: CustomTool[] = [
             linked_relations: linkedDatabases,
             block_summary: blockSummary,
             blocks: blocks.slice(0, 10)
+          }
+        }
+
+        case 'read-markdown': {
+          if (!page_id) return { success: false, error: 'page_id required for read-markdown' }
+
+          const queryParams: Record<string, any> = { page_id }
+          if (include_transcript) queryParams.include_transcript = true
+
+          const mdResponse = await httpClient.rawRequest('get', '/v1/pages/{page_id}/markdown', queryParams)
+          return {
+            success: true,
+            id: mdResponse.data.id,
+            markdown: mdResponse.data.markdown,
+            truncated: mdResponse.data.truncated,
+            unknown_block_ids: mdResponse.data.unknown_block_ids || []
           }
         }
 
@@ -1085,6 +1107,57 @@ export const unifiedTools: CustomTool[] = [
           return result
         }
 
+        case 'create-markdown': {
+          if (!data_source_id && !parent_page_id) return { success: false, error: 'data_source_id or parent_page_id required' }
+          if (!markdown_content) return { success: false, error: 'markdown_content required for create-markdown' }
+
+          let resolvedProperties = properties || {}
+          let fuzzyWarnings: string[] = []
+          let titlePropertyName: string | null = null
+
+          if (data_source_id) {
+            const fuzzyResult = await resolvePropertiesWithFuzzyMatch(resolvedProperties, data_source_id, httpClient)
+            resolvedProperties = fuzzyResult.resolved
+            fuzzyWarnings = fuzzyResult.warnings
+            titlePropertyName = fuzzyResult.titlePropertyName
+          }
+
+          let parsedIcon: any = null
+          let iconWarning: string | undefined
+          if (icon) {
+            const iconResult = await parseIcon(icon)
+            parsedIcon = iconResult.icon
+            if (iconResult.error) iconWarning = iconResult.error
+          }
+
+          const createProps: any = { ...resolvedProperties }
+          // If title is provided, set it explicitly; otherwise first # h1 in markdown becomes title
+          if (title) {
+            const titleKey = titlePropertyName || 'title'
+            createProps[titleKey] = { title: textToRichText(title) }
+          }
+
+          const parentObj = data_source_id
+            ? { type: 'data_source_id', data_source_id }
+            : { page_id: parent_page_id }
+
+          const createBody: any = {
+            parent: parentObj,
+            markdown: markdown_content,
+            properties: Object.keys(createProps).length > 0 ? createProps : undefined
+          }
+          if (parsedIcon) createBody.icon = parsedIcon
+
+          const createResponse = await httpClient.rawRequest('post', '/v1/pages', createBody)
+          const createdPage = createResponse.data
+
+          const mdResult: any = { success: true, action: 'created', page_id: createdPage.id, url: createdPage.url }
+          if (title) mdResult.title = title
+          if (fuzzyWarnings.length > 0) mdResult.fuzzy_matches = fuzzyWarnings
+          if (iconWarning) mdResult.icon_warning = iconWarning
+          return mdResult
+        }
+
         case 'update': {
           if (!page_id) return { success: false, error: 'page_id required for update' }
 
@@ -1153,6 +1226,44 @@ export const unifiedTools: CustomTool[] = [
           if (fuzzyWarnings.length > 0) updateResult.fuzzy_matches = fuzzyWarnings
           if (iconWarning) updateResult.icon_warning = iconWarning
           return updateResult
+        }
+
+        case 'update-markdown': {
+          if (!page_id) return { success: false, error: 'page_id required for update-markdown' }
+          if (!markdown_content) return { success: false, error: 'markdown_content required for update-markdown' }
+
+          let body: Record<string, any>
+          if (markdown_operation === 'replace') {
+            body = {
+              page_id,
+              type: 'replace_content_range',
+              replace_content_range: {
+                content: markdown_content,
+                ...(markdown_selection ? { content_range: markdown_selection } : {}),
+                allow_deleting_content
+              }
+            }
+          } else {
+            // Default: insert (appends if no selection, inserts after selection if provided)
+            body = {
+              page_id,
+              type: 'insert_content',
+              insert_content: {
+                content: markdown_content,
+                ...(markdown_selection ? { after: markdown_selection } : {})
+              }
+            }
+          }
+
+          const mdUpdateResponse = await httpClient.rawRequest('patch', '/v1/pages/{page_id}/markdown', body)
+          return {
+            success: true,
+            action: markdown_operation === 'replace' ? 'replaced' : 'inserted',
+            id: mdUpdateResponse.data.id,
+            markdown: mdUpdateResponse.data.markdown,
+            truncated: mdUpdateResponse.data.truncated,
+            unknown_block_ids: mdUpdateResponse.data.unknown_block_ids || []
+          }
         }
 
         case 'delete': {
