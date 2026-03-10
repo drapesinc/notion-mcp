@@ -2323,6 +2323,7 @@ export const unifiedTools: CustomTool[] = [
         properties: {
           action: { type: 'string', enum: ['get', 'create'], description: 'The operation to perform' },
           page_id: { type: 'string', description: 'Page ID' },
+          data_source_id: { type: 'string', description: 'Data source ID (required for create when page is in a data source)' },
           block_id: { type: 'string', description: 'Block ID (for get comments on specific block)' },
           content: { type: 'string', description: 'Comment text (for create)' },
           page_size: { type: 'number', description: 'Max comments to return', default: 100 }
@@ -2331,7 +2332,7 @@ export const unifiedTools: CustomTool[] = [
       }
     },
     handler: async (params, httpClient) => {
-      const { action, page_id, block_id, content, page_size = 100 } = params
+      const { action, page_id, data_source_id, block_id, content, page_size = 100 } = params
 
       switch (action) {
         case 'get': {
@@ -2357,9 +2358,13 @@ export const unifiedTools: CustomTool[] = [
           if (!page_id) return { success: false, error: 'page_id required' }
           if (!content) return { success: false, error: 'content required' }
 
+          const parentObj = data_source_id
+            ? { type: 'data_source_id', data_source_id, page_id }
+            : { page_id }
+
           const response = await httpClient.executeOperation(
             { method: 'post', path: '/v1/comments', operationId: 'create-a-comment' },
-            { parent: { page_id }, rich_text: [{ text: { content } }] }
+            { parent: parentObj, rich_text: [{ text: { content } }] }
           )
 
           return { success: true, comment_id: response.data.id }
