@@ -2073,6 +2073,7 @@ export const unifiedTools: CustomTool[] = [
             try {
               // Auto-discover property names from schema
               let statusPropertyName = 'Status'
+              let assigneePropertyName: string | null = null // "Assignee" (Drapes) or "Owner" (Four All) or null (Personal)
               const dateProperties: string[] = []
               try {
                 const schemaResponse = await httpClient.rawRequest('get', `/v1/data_sources/${dsId}`, {})
@@ -2090,6 +2091,13 @@ export const unifiedTools: CustomTool[] = [
                       dateProperties.push(propName)
                     }
                   }
+                  // Detect assignee/owner people property
+                  if (propType === 'people') {
+                    const lowerName = propName.toLowerCase()
+                    if (['assignee', 'owner'].includes(lowerName)) {
+                      assigneePropertyName = propName
+                    }
+                  }
                 }
               } catch (schemaErr: any) {
                 // Fall back to defaults if schema fetch fails
@@ -2099,7 +2107,7 @@ export const unifiedTools: CustomTool[] = [
               if (dateProperties.length === 0) {
                 dateProperties.push('Due', 'Work Session')
               }
-              debug.push(`${ws} props: status=${statusPropertyName}, dates=${dateProperties.join(',')}`)
+              debug.push(`${ws} props: status=${statusPropertyName}, dates=${dateProperties.join(',')}, assignee=${assigneePropertyName || 'none'}`)
 
 
               // Build date filter with OR across all scheduling properties
@@ -2200,9 +2208,14 @@ export const unifiedTools: CustomTool[] = [
                   }
                 }
 
+                // Extract assignees from the detected people property
+                const assignees: string[] = assigneePropertyName
+                  ? (properties[assigneePropertyName] || [])
+                  : []
+
                 const taskData: any = {
                   id: task.id, workspace: ws, title, url: task.url,
-                  status, due,
+                  status, due, assignees,
                   do_next: properties['Do Next'] || properties['Smart List']
                 }
 

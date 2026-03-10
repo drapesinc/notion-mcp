@@ -1609,9 +1609,10 @@ export const customTools: CustomTool[] = [
           }
 
           // Detect property names from schema (different databases use different names)
-          // Due vs Deadline, Status vs Work Status, etc.
+          // Due vs Deadline, Status vs Work Status, Assignee vs Owner, etc.
           let duePropertyName = 'Due' // default
           let statusPropertyName = 'Status' // default
+          let assigneePropertyName: string | null = null // "Assignee" (Drapes) or "Owner" (Four All) or null (Personal)
           try {
             const schemaResponse = await httpClient.rawRequest('get', `/v1/data_sources/${dsId}`, {})
             const properties = schemaResponse.data?.properties || {}
@@ -1628,6 +1629,13 @@ export const customTools: CustomTool[] = [
                   duePropertyName = propName
                 } else if (lowerName === 'deadline' && duePropertyName === 'Due') {
                   duePropertyName = propName
+                }
+              }
+              // Detect assignee/owner people property
+              if (propType === 'people') {
+                const lowerName = propName.toLowerCase()
+                if (['assignee', 'owner'].includes(lowerName)) {
+                  assigneePropertyName = propName
                 }
               }
             }
@@ -1658,9 +1666,9 @@ export const customTools: CustomTool[] = [
 
           // Build base filter conditions (status + optional assignee)
           const baseConditions: any[] = [statusFilter]
-          if (resolvedAssigneeId) {
+          if (resolvedAssigneeId && assigneePropertyName) {
             baseConditions.push({
-              property: 'Assignee',
+              property: assigneePropertyName,
               people: { contains: resolvedAssigneeId }
             })
           }
@@ -1764,6 +1772,11 @@ export const customTools: CustomTool[] = [
               ? (dueDate < workSession ? dueDate : workSession)
               : (dueDate || workSession)
 
+            // Extract assignees from the detected people property
+            const assignees: string[] = assigneePropertyName
+              ? (properties[assigneePropertyName] || [])
+              : []
+
             const taskData: any = {
               id: task.id,
               workspace: ws,
@@ -1774,7 +1787,7 @@ export const customTools: CustomTool[] = [
               work_session: workSession,
               effective_due: effectiveDue,
               priority: properties['Priority'],
-              assignee: properties['Assignee'],
+              assignees,
               do_next: properties['Do Next'] || properties['Smart List'],
               project_count: properties['Project']
             }
