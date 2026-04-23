@@ -2276,6 +2276,115 @@ export const unifiedTools: CustomTool[] = [
   },
 
   // ============================================================================
+  // 3b. notion-view - Database View Operations
+  // ============================================================================
+  {
+    definition: {
+      name: 'notion-view',
+      description: 'Unified database view operations: list/get/create/update/delete views on a Notion database. Views are first-class since Notion API 2025-09-03. Use create to add a tab view (table/board/list/gallery/calendar/timeline), then update to set filter/sorts.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['list', 'get', 'create', 'update', 'delete'], description: 'The operation to perform' },
+          view_id: { type: 'string', description: 'View ID (required for get, update, delete)' },
+          database_id: { type: 'string', description: 'Database ID (required for create; used as parent)' },
+          data_source_id: { type: 'string', description: 'Data source ID (required for list; required for create along with database_id)' },
+          name: { type: 'string', description: 'View name (for create/update)' },
+          type: { type: 'string', enum: ['table', 'board', 'list', 'gallery', 'calendar', 'timeline'], description: 'View type (for create)' },
+          filter: { type: 'object', description: 'Notion filter object (same shape as database query filter)', additionalProperties: true },
+          sorts: { type: 'array', description: 'Sort criteria [{property, direction}]', items: { type: 'object' } },
+          configuration: { type: 'object', description: 'View configuration (type-specific). For board: {type:"board", group_by: {...}}. For others, see Notion docs.', additionalProperties: true },
+          quick_filters: { type: 'array', description: 'Quick filter definitions', items: { type: 'object' } }
+        },
+        required: ['action']
+      }
+    },
+    handler: async (params, httpClient) => {
+      const { action, view_id, database_id, data_source_id, name, type, filter, sorts, configuration, quick_filters } = params
+
+      const summarize = (v: any) => ({
+        id: v.id,
+        name: v.name,
+        type: v.type,
+        url: v.url,
+        data_source_id: v.data_source_id,
+        parent: v.parent,
+        filter: v.filter ?? null,
+        sorts: v.sorts ?? null,
+        configuration: v.configuration ?? null
+      })
+
+      try {
+        switch (action) {
+          case 'list': {
+            if (!data_source_id) return { success: false, error: 'data_source_id required' }
+            const resp = await httpClient.rawRequest('get', `/v1/views?data_source_id=${data_source_id}`, {})
+            // GET /v1/views returns only id+object; fetch each for the full shape
+            const ids = (resp.data.results || []).map((v: any) => v.id)
+            const details = await Promise.all(ids.map((id: string) =>
+              httpClient.rawRequest('get', `/v1/views/${id}`, {}).then((r: any) => summarize(r.data)).catch(() => ({ id, error: 'fetch failed' }))
+            ))
+            return { success: true, count: details.length, views: details }
+          }
+
+          case 'get': {
+            if (!view_id) return { success: false, error: 'view_id required' }
+            const resp = await httpClient.rawRequest('get', `/v1/views/${view_id}`, {})
+            return { success: true, view: summarize(resp.data), raw: resp.data }
+          }
+
+          case 'create': {
+            if (!database_id) return { success: false, error: 'database_id required' }
+            if (!data_source_id) return { success: false, error: 'data_source_id required' }
+            if (!name) return { success: false, error: 'name required' }
+            if (!type) return { success: false, error: 'type required' }
+            const resp = await httpClient.rawRequest('post', `/v1/views`, {
+              database_id, data_source_id, name, type
+            })
+            // If filter/sorts/config provided, patch them on after creation
+            if (filter || sorts || configuration || quick_filters) {
+              const patch: any = {}
+              if (filter) patch.filter = filter
+              if (sorts) patch.sorts = sorts
+              if (configuration) patch.configuration = configuration
+              if (quick_filters) patch.quick_filters = quick_filters
+              const patched = await httpClient.rawRequest('patch', `/v1/views/${resp.data.id}`, patch)
+              return { success: true, view: summarize(patched.data) }
+            }
+            return { success: true, view: summarize(resp.data) }
+          }
+
+          case 'update': {
+            if (!view_id) return { success: false, error: 'view_id required' }
+            const patch: any = {}
+            if (name !== undefined) patch.name = name
+            if (filter !== undefined) patch.filter = filter
+            if (sorts !== undefined) patch.sorts = sorts
+            if (configuration !== undefined) patch.configuration = configuration
+            if (quick_filters !== undefined) patch.quick_filters = quick_filters
+            if (Object.keys(patch).length === 0) return { success: false, error: 'at least one of name/filter/sorts/configuration/quick_filters required' }
+            const resp = await httpClient.rawRequest('patch', `/v1/views/${view_id}`, patch)
+            return { success: true, view: summarize(resp.data) }
+          }
+
+          case 'delete': {
+            if (!view_id) return { success: false, error: 'view_id required' }
+            await httpClient.rawRequest('delete', `/v1/views/${view_id}`, {})
+            return { success: true, deleted: view_id }
+          }
+
+          default:
+            return { success: false, error: `Unknown action: ${action}` }
+        }
+      } catch (error: any) {
+        const errMsg = error?.data?.message || error?.message || 'View operation failed'
+        const errCode = error?.data?.code || error?.status
+        return { success: false, error: errMsg, code: errCode, details: error?.data }
+      }
+    }
+  },
+
+  // ============================================================================
   // 4. notion-search - Search Operations
   // ============================================================================
   {
