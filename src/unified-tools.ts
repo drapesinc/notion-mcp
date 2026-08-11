@@ -2281,7 +2281,7 @@ export const unifiedTools: CustomTool[] = [
   {
     definition: {
       name: 'notion-view',
-      description: 'Unified database view operations: list/get/create/update/delete views on a Notion database. Views are first-class since Notion API 2025-09-03. Use create to add a tab view (table/board/list/gallery/calendar/timeline), then update to set filter/sorts.',
+      description: 'Unified database view operations: list/get/create/update/delete views on a Notion database. Views (incl. CHARTS) are first-class since Notion API 2025-09-03 (charts need 2026-03-11). create adds a view (table/board/list/gallery/calendar/timeline/chart/map/dashboard). For a chart pass configuration:{type:"chart", chart_type:"column|bar|line|donut", x_axis:{type, property_id, sort:{type:"manual"}}, y_axis:{aggregator:"sum|average|count", property_id}, color_theme, height}; a DATE x_axis also needs group_by (day|week|month); pass property_ids exactly as the API returns them (URL-encoded).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -2290,10 +2290,10 @@ export const unifiedTools: CustomTool[] = [
           database_id: { type: 'string', description: 'Database ID (required for create; used as parent)' },
           data_source_id: { type: 'string', description: 'Data source ID (required for list; required for create along with database_id)' },
           name: { type: 'string', description: 'View name (for create/update)' },
-          type: { type: 'string', enum: ['table', 'board', 'list', 'gallery', 'calendar', 'timeline'], description: 'View type (for create)' },
+          type: { type: 'string', enum: ['table', 'board', 'list', 'gallery', 'calendar', 'timeline', 'chart', 'map', 'dashboard'], description: 'View type (for create)' },
           filter: { type: 'object', description: 'Notion filter object (same shape as database query filter)', additionalProperties: true },
           sorts: { type: 'array', description: 'Sort criteria [{property, direction}]', items: { type: 'object' } },
-          configuration: { type: 'object', description: 'View configuration (type-specific). For board: {type:"board", group_by: {...}}. For others, see Notion docs.', additionalProperties: true },
+          configuration: { type: 'object', description: 'View configuration (type-specific). board: {type:"board", group_by}. chart: {type:"chart", chart_type, x_axis:{type,property_id,sort,group_by?}, y_axis:{aggregator,property_id}, color_theme, height}. See Notion docs.', additionalProperties: true },
           quick_filters: { type: 'array', description: 'Quick filter definitions', items: { type: 'object' } }
         },
         required: ['action']
@@ -2338,19 +2338,14 @@ export const unifiedTools: CustomTool[] = [
             if (!data_source_id) return { success: false, error: 'data_source_id required' }
             if (!name) return { success: false, error: 'name required' }
             if (!type) return { success: false, error: 'type required' }
-            const resp = await httpClient.rawRequest('post', `/v1/views`, {
-              database_id, data_source_id, name, type
-            })
-            // If filter/sorts/config provided, patch them on after creation
-            if (filter || sorts || configuration || quick_filters) {
-              const patch: any = {}
-              if (filter) patch.filter = filter
-              if (sorts) patch.sorts = sorts
-              if (configuration) patch.configuration = configuration
-              if (quick_filters) patch.quick_filters = quick_filters
-              const patched = await httpClient.rawRequest('patch', `/v1/views/${resp.data.id}`, patch)
-              return { success: true, view: summarize(patched.data) }
-            }
+            // Pass filter/sorts/configuration in the CREATE body — charts require
+            // their configuration at creation (a follow-up PATCH 400s / no-ops).
+            const createBody: any = { database_id, data_source_id, name, type }
+            if (filter) createBody.filter = filter
+            if (sorts) createBody.sorts = sorts
+            if (configuration) createBody.configuration = configuration
+            if (quick_filters) createBody.quick_filters = quick_filters
+            const resp = await httpClient.rawRequest('post', `/v1/views`, createBody)
             return { success: true, view: summarize(resp.data) }
           }
 

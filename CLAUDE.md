@@ -30,7 +30,13 @@ All tools in this fork use **`data_source_id`** (not `database_id`) for consiste
 
 **Note:** The Notion API response for pages still returns `parent.database_id` even though the API terminology uses "data source". This is a Notion API quirk - internally we handle this mapping.
 
-### API Limitation: Views Not Accessible
+### ~~API Limitation: Views Not Accessible~~ — OUTDATED (corrected 2026-08-10)
+
+> ⚠️ **This section is historical and NO LONGER TRUE.** Views (incl. **charts**) are
+> first-class in the Notion API since 2025-09-03 (charts require 2026-03-11). Use the
+> **`notion-view`** tool — `list/get/create/update/delete`, `type` incl.
+> `table/board/list/gallery/calendar/timeline/chart/map/dashboard`. Chart config goes in
+> the create body. The text below reflects the pre-2025-09-03 state only.
 
 **Views, filters, sorts, and tabs are NOT exposed in the Notion API.** This is a confirmed limitation.
 
@@ -602,6 +608,17 @@ Dynamic resources:
 - `notion://workflow/database/{workspace}` - Data source ID for a workspace
 
 ## Changelog
+
+### 2026-08-10: Notion-Version → 2026-03-11 + chart views
+
+- **Bumped** `Notion-Version` `2025-09-03` → `2026-03-11` (`workspace-config.ts`).
+- **`notion-view`** now supports `type: chart` (also `map`, `dashboard`); `configuration`
+  (incl. chart `chart_type`/`x_axis`/`y_axis`) is passed in the CREATE body — a chart needs
+  its config at creation, so the old create-then-PATCH flow was replaced with inline config.
+- Chart gotchas: every `x_axis` needs a `sort`; a **date** `x_axis` also needs `group_by`
+  (day|week|month); `property_id`s are used exactly as returned (URL-encoded).
+- Corrected the stale "Views Not Accessible" section above.
+- **Takes effect on next `/mcp` → notion reconnect / session restart.**
 
 ### 2026-03-02: Markdown Content API
 

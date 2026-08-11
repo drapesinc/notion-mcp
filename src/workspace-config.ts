@@ -103,7 +103,7 @@ export function getAvailableWorkspaces(config: MultiWorkspaceConfig): string[] {
 export function getWorkspaceHeaders(workspace: WorkspaceConfig): Record<string, string> {
   return {
     'Authorization': `Bearer ${workspace.token}`,
-    'Notion-Version': '2025-09-03'
+    'Notion-Version': '2026-03-11'
   }
 }
 
