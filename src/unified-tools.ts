@@ -2073,6 +2073,8 @@ export const unifiedTools: CustomTool[] = [
             try {
               // Auto-discover property names from schema
               let statusPropertyName = 'Status'
+              let statusOptions: any[] = []
+              let statusOptionsFound = false
               let assigneePropertyName: string | null = null // "Assignee" (Drapes) or "Owner" (Four All) or null (Personal)
               const dateProperties: string[] = []
               try {
@@ -2082,7 +2084,17 @@ export const unifiedTools: CustomTool[] = [
                   const propType = (propDef as any).type
                   // Find the status property (usually only one)
                   if (propType === 'status') {
-                    statusPropertyName = propName
+                    // A DB can have several status-typed props (Personal has Status AND
+                    // Priority). Prefer one literally named "Status"; otherwise take the
+                    // first, never let a later one silently overwrite a better match.
+                    const isBetter = propName.toLowerCase() === 'status' || !statusOptionsFound
+                    if (isBetter) {
+                      statusPropertyName = propName
+                      statusOptions = ((propDef as any).status?.groups
+                        ? (propDef as any).status.options
+                        : (propDef as any).status?.options) || []
+                      statusOptionsFound = true
+                    }
                   }
                   // Collect scheduling-related date properties
                   if (propType === 'date') {
@@ -2122,13 +2134,18 @@ export const unifiedTools: CustomTool[] = [
                 return upperBound
               }
               // Build status filter
-              const statusFilter = {
-                and: [
-                  { property: statusPropertyName, status: { does_not_equal: 'Done' } },
-                  { property: statusPropertyName, status: { does_not_equal: "Don't Do" } },
-                  { property: statusPropertyName, status: { does_not_equal: 'Archived' } }
-                ]
-              }
+              // 🚨 Only exclude options that EXIST on this property. Notion 400s on an
+              // unknown option ("Archived" is not a Drapes Work Status), and the catch
+              // below used to swallow that into a silent `total_tasks: 0`.
+              const wanted = ['Done', "Don't Do", 'Archived']
+              const available = new Set(statusOptions.map((o: any) => o?.name).filter(Boolean))
+              const excludes = statusOptionsFound
+                ? wanted.filter(w => available.has(w))
+                : wanted
+              debug.push(`${ws} status excludes: ${excludes.join(',') || '(none)'}`)
+              const statusFilter = excludes.length
+                ? { and: excludes.map(v => ({ property: statusPropertyName, status: { does_not_equal: v } })) }
+                : null
 
               // When multiple date properties + overdue floor active, Notion API rejects
               // nested compound filters: { or: [{ and: [...] }, { and: [...] }] }
@@ -2142,7 +2159,10 @@ export const unifiedTools: CustomTool[] = [
                     sorts: [{ property: dateProperties[0], direction: 'ascending' }],
                     page_size: 50
                   })
-                } catch {
+                } catch (queryErr: any) {
+                  const msg = queryErr?.data?.message || queryErr?.response?.data?.message || queryErr?.message || 'unknown query error'
+                  errors.push(`${ws}: ${msg}`)
+                  debug.push(`${ws} query failed: ${msg}`)
                   const legacyDbId = getDatabaseId('tasks', ws)
                   if (!legacyDbId) return null
                   return await httpClient.rawRequest('post', `/v1/data_sources/${legacyDbId}/query`, {
@@ -2158,7 +2178,9 @@ export const unifiedTools: CustomTool[] = [
                 const seenIds = new Set<string>()
                 tasks = []
                 for (const dateProp of dateProperties) {
-                  const filter = { and: [buildDateRange(dateProp), statusFilter] }
+                  const filter = statusFilter
+                    ? { and: [buildDateRange(dateProp), statusFilter] }
+                    : buildDateRange(dateProp)
                   const resp = await runQuery(filter, dsId)
                   if (!resp) continue
                   for (const t of (resp.data.results || [])) {
@@ -2173,7 +2195,7 @@ export const unifiedTools: CustomTool[] = [
                 const dateFilter = dateFilters.length === 1
                   ? dateFilters[0]
                   : { or: dateFilters }
-                const resp = await runQuery({ and: [dateFilter, statusFilter] }, dsId)
+                const resp = await runQuery(statusFilter ? { and: [dateFilter, statusFilter] } : dateFilter, dsId)
                 if (!resp) continue
                 tasks = resp.data.results || []
               }
@@ -2265,6 +2287,10 @@ export const unifiedTools: CustomTool[] = [
               due_today: allTasks.filter(t => t.due === todayStr).length,
               upcoming: allTasks.filter(t => t.due && t.due > todayStr).length
             },
+            // 🚨 Never return a silent zero. A workspace that errored is NOT a workspace
+            // with no due tasks, and the old response was indistinguishable between them.
+            ...(errors.length ? { errors } : {}),
+            ...(errors.length && allTasks.length === 0 ? { debug } : {}),
             tasks: allTasks
           }
         }
