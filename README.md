@@ -69,6 +69,17 @@ If you have hardcoded tool names or prompts that reference the old database tool
 
 ---
 
+## Page content as Markdown
+
+The server exposes two tools for working with page content as enhanced Markdown instead of block JSON, which is significantly more token-efficient for AI agents:
+
+- `retrieve-page-markdown` — Read a page's full content as Markdown (`GET /v1/pages/{page_id}/markdown`). Pass `include_transcript: true` to inline meeting-note transcripts.
+- `update-page-markdown` — Edit a page's content with Markdown (`PATCH /v1/pages/{page_id}/markdown`). Prefer `replace_content` to overwrite the whole page, or `update_content` for targeted find-and-replace edits.
+
+These endpoints require Notion API version `2026-03-11`. The server now sources the `Notion-Version` header **per operation** from the OpenAPI spec, so these tools use `2026-03-11` while the rest of the API continues to use `2025-09-03` — no configuration needed. If you set `Notion-Version` yourself via `OPENAPI_MCP_HEADERS`, your value takes precedence for every tool.
+
+---
+
 ### Installation
 
 #### 1. Setting up integration in Notion
@@ -323,11 +334,14 @@ npx @notionhq/notion-mcp-server --transport http
 # Run on a custom port
 npx @notionhq/notion-mcp-server --transport http --port 8080
 
+# Bind to a different host. The default is 127.0.0.1.
+npx @notionhq/notion-mcp-server --transport http --host 0.0.0.0
+
 # Run with a custom authentication token
 npx @notionhq/notion-mcp-server --transport http --auth-token "your-secret-token"
 ```
 
-When using Streamable HTTP transport, the server will be available at `http://0.0.0.0:<port>/mcp`.
+When using Streamable HTTP transport, the server will be available at `http://127.0.0.1:<port>/mcp` by default.
 
 ##### Authentication
 
@@ -339,11 +353,10 @@ The Streamable HTTP transport requires bearer token authentication for security.
 npx @notionhq/notion-mcp-server --transport http
 ```
 
-The server will generate a secure random token and display it in the console:
+The server will generate a secure random token and write it to a file with restricted permissions:
 
 ```text
-Generated auth token: a1b2c3d4e5f6789abcdef0123456789abcdef0123456789abcdef0123456789ab
-Use this token in the Authorization header: Bearer a1b2c3d4e5f6789abcdef0123456789abcdef0123456789abcdef0123456789ab
+Generated auth token written to: /tmp/.notion-mcp-auth-token-12345
 ```
 
 ###### Option 2: Custom token via command line (recommended for production)
@@ -360,6 +373,18 @@ AUTH_TOKEN="your-secret-token" npx @notionhq/notion-mcp-server --transport http
 
 The command line argument `--auth-token` takes precedence over the `AUTH_TOKEN` environment variable if both are provided.
 
+###### Unsafe option: disable HTTP authentication
+
+You can disable bearer token authentication only with the explicit unsafe flag:
+
+```bash
+npx @notionhq/notion-mcp-server --transport http --unsafe-disable-auth
+```
+
+WARNING: `--unsafe-disable-auth` is unsafe. The server may be reachable to pages you visit via DNS rebinding. Only use it on an isolated network.
+
+When authentication is disabled, the server enables DNS rebinding protection by checking the `Host` and `Origin` headers against the configured local host and loopback hosts. The previous `--disable-auth` flag is still accepted as a deprecated alias, but it will print a warning.
+
 ##### Making HTTP requests
 
 All requests to the Streamable HTTP transport must include the bearer token in the Authorization header:
@@ -374,6 +399,51 @@ curl -H "Authorization: Bearer your-token-here" \
 ```
 
 **Note:** Make sure to set either the `NOTION_TOKEN` environment variable (recommended) or the `OPENAPI_MCP_HEADERS` environment variable with your Notion integration token when using either transport mode.
+
+##### Serving multiple integrations (per-request token passthrough)
+
+By default the server authenticates to Notion with a single token baked in at
+startup, which locks one deployment to one Notion integration. To let a single
+deployment serve **multiple** integrations, enable token passthrough so each
+client supplies its own Notion integration token per connection:
+
+```bash
+# Enable per-request Notion tokens (flag or ENABLE_TOKEN_PASSTHROUGH=true)
+npx @notionhq/notion-mcp-server --transport http --enable-token-passthrough
+```
+
+Clients then send their Notion token on the **initialize** request using the
+dedicated `Notion-Token` header:
+
+```bash
+curl -H "Authorization: Bearer <server-auth-token>" \
+     -H "Notion-Token: ntn_****" \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc": "2.0", "method": "initialize", "params": {}, "id": 1}' \
+     http://localhost:3000/mcp
+```
+
+How the token is resolved for each connection, in order:
+
+1. The `Notion-Token` header (preferred — unambiguous, and works alongside the
+   server's own `Authorization` gateway auth). If present it must be a valid
+   Notion token, otherwise the request is rejected with `401`.
+2. `Authorization: Bearer ntn_****` — only when the server's own bearer auth is
+   turned off (`--unsafe-disable-auth`), so the header is free to carry the
+   Notion token directly.
+3. Otherwise the startup env token (`NOTION_TOKEN` / `OPENAPI_MCP_HEADERS`), if
+   set, so passthrough and a default integration can coexist on one deployment.
+
+Notes:
+
+- Only values with a Notion token prefix (`ntn_`, legacy `secret_`) are treated
+  as Notion tokens, so the server's gateway secret and a tenant's Notion token
+  never collide.
+- Each token is bound to its MCP session; tokens are never logged (only a
+  redacted prefix is emitted).
+- This is a deliberate token-passthrough setup. Always deploy it over TLS, and
+  prefer keeping the server's own bearer auth (`--auth-token`) enabled as a
+  gateway in front of multi-tenant traffic.
 
 ### Examples
 

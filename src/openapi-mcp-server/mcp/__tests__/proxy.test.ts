@@ -343,13 +343,13 @@ describe('MCPProxy', () => {
     it('should use NOTION_TOKEN when OPENAPI_MCP_HEADERS is not set', () => {
       process.env.NOTION_TOKEN = 'ntn_test_token_123'
 
-      proxy = new MCPProxy('test-proxy', mockOpenApiSpec)
-
+      const proxy = new MCPProxy('test-proxy', mockOpenApiSpec)
+      // Notion-Version is no longer hardcoded here; it is sourced per-operation
+      // from the OpenAPI spec by HttpClient.
       expect(HttpClient).toHaveBeenCalledWith(
         expect.objectContaining({
           headers: {
             'Authorization': 'Bearer ntn_test_token_123',
-            'Notion-Version': '2025-09-03'
           },
         }),
         expect.anything(),
@@ -364,9 +364,11 @@ describe('MCPProxy', () => {
 
       expect(HttpClient).toHaveBeenCalledWith(
         expect.objectContaining({
+          // Notion-Version is deliberately absent: upstream stopped hardcoding
+          // it in the legacy env path and now sources it per-operation from the
+          // OpenAPI spec inside HttpClient.
           headers: {
             'Authorization': 'Bearer ntn_test_token_123',
-            'Notion-Version': '2025-09-03'
           },
         }),
         expect.anything(),
@@ -394,6 +396,28 @@ describe('MCPProxy', () => {
         expect.anything(),
       )
     })
+
+    it('constructs NO client when neither OPENAPI_MCP_HEADERS nor NOTION_TOKEN are set', () => {
+      // Upstream asserts HttpClient is called with `headers: {}` here. This fork
+      // deliberately differs: with no workspace tokens and no legacy env vars it
+      // builds no client at all and warns, rather than creating one that would
+      // 401 on every call. Kept as a real assertion of our behaviour instead of
+      // importing a test that must fail.
+      delete process.env.OPENAPI_MCP_HEADERS
+      delete process.env.NOTION_TOKEN
+      for (const key of Object.keys(process.env)) {
+        if (key.startsWith('NOTION_TOKEN_')) delete process.env[key]
+      }
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      new MCPProxy('test-proxy', mockOpenApiSpec)
+
+      expect(HttpClient).not.toHaveBeenCalled()
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('No Notion tokens configured'),
+      )
+      consoleSpy.mockRestore()
+    })
   })
 
   describe('connect', () => {
@@ -411,6 +435,27 @@ describe('MCPProxy', () => {
     let callToolHandler: Function
 
     beforeEach(() => {
+      // Construct our own proxy, with a workspace. This block used to read
+      // whatever `proxy` a previous test happened to leave behind, and the
+      // outer beforeEach's vi.clearAllMocks() had already wiped that
+      // instance's recorded setRequestHandler calls — so handlers[1] was
+      // undefined and every test here died with "callToolHandler is not a
+      // function". The outer beforeEach also mocks an EMPTY workspace, so a
+      // proxy built from it has no HttpClient and callTool returns before
+      // reaching executeOperation. Both pre-existing; neither is related to
+      // the upstream merge.
+      const testWorkspace = { name: 'default', token: 'test-token', envVar: 'NOTION_TOKEN' }
+      mockLoadWorkspaceConfig.mockReturnValue({
+        workspaces: new Map([['default', testWorkspace]]),
+        defaultWorkspace: 'default',
+      })
+      mockGetWorkspace.mockReturnValue(testWorkspace)
+      mockGetWorkspaceHeaders.mockReturnValue({
+        'Authorization': 'Bearer test-token',
+        'Notion-Version': '2026-03-11'
+      })
+
+      proxy = new MCPProxy('test-proxy', mockOpenApiSpec)
       const server = (proxy as any).server
       const handlers = server.setRequestHandler.mock.calls
         .flatMap((x: unknown[]) => x)
@@ -878,6 +923,187 @@ describe('MCPProxy', () => {
           query: 'hello world',
           filter: '{ not valid json }',
         },
+      )
+    })
+
+    it('should handle API-create-a-comment parent provided as a JSON string', async () => {
+      const mockResponse = {
+        data: { id: 'new-comment-id' },
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+      }
+      ;(HttpClient.prototype.executeOperation as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
+
+      ;(proxy as any).openApiLookup = {
+        'API-create-a-comment': {
+          operationId: 'create-a-comment',
+          responses: { '200': { description: 'Success' } },
+          method: 'post',
+          path: '/comments',
+        },
+      }
+
+      const server = (proxy as any).server
+      const handlers = server.setRequestHandler.mock.calls.flatMap((x: unknown[]) => x).filter((x: unknown) => typeof x === 'function')
+      const callToolHandler = handlers[1]
+
+      // Some clients double-encode `parent` as a JSON string. Forwarding that to
+      // the Notion API makes it throw on `"block_id" in <string>` and return a
+      // 500, so deserialize it back to an object first.
+      const parentAsString = JSON.stringify({ page_id: '3870bb29-1a64-816b-8641-c87ca28062d0' })
+
+      await expect(
+        callToolHandler({
+          params: {
+            name: 'API-create-a-comment',
+            arguments: {
+              parent: parentAsString,
+              rich_text: [{ text: { content: 'Hello' } }],
+            },
+          },
+        }),
+      ).resolves.toBeDefined()
+
+      expect(HttpClient.prototype.executeOperation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          parent: { page_id: '3870bb29-1a64-816b-8641-c87ca28062d0' },
+        }),
+      )
+    })
+
+    it('should deserialize a stringified object nested inside an array element object', async () => {
+      const mockResponse = {
+        data: { id: 'new-page-id' },
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+      }
+      ;(HttpClient.prototype.executeOperation as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
+
+      ;(proxy as any).openApiLookup = {
+        'API-appendBlockChildren': {
+          operationId: 'appendBlockChildren',
+          responses: { '200': { description: 'Success' } },
+          method: 'patch',
+          path: '/blocks/{block_id}/children',
+        },
+      }
+
+      const server = (proxy as any).server
+      const handlers = server.setRequestHandler.mock.calls.flatMap((x: unknown[]) => x).filter((x: unknown) => typeof x === 'function')
+      const callToolHandler = handlers[1]
+
+      // The array element is a real object, but one of its properties is itself
+      // a stringified object. The previous shallow array handling left this as a
+      // string; the uniform recursive walk now normalizes it.
+      const children = [
+        {
+          object: 'block',
+          type: 'paragraph',
+          paragraph: JSON.stringify({ rich_text: [{ type: 'text', text: { content: 'Hello' } }] }),
+        },
+      ]
+
+      await callToolHandler({
+        params: {
+          name: 'API-appendBlockChildren',
+          arguments: { children },
+        },
+      })
+
+      expect(HttpClient.prototype.executeOperation).toHaveBeenCalledWith(
+        expect.anything(),
+        {
+          children: [
+            {
+              object: 'block',
+              type: 'paragraph',
+              paragraph: { rich_text: [{ type: 'text', text: { content: 'Hello' } }] },
+            },
+          ],
+        },
+      )
+    })
+
+    it('should deserialize a double-stringified parent', async () => {
+      const mockResponse = {
+        data: { id: 'new-comment-id' },
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+      }
+      ;(HttpClient.prototype.executeOperation as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
+
+      ;(proxy as any).openApiLookup = {
+        'API-create-a-comment': {
+          operationId: 'create-a-comment',
+          responses: { '200': { description: 'Success' } },
+          method: 'post',
+          path: '/comments',
+        },
+      }
+
+      const server = (proxy as any).server
+      const handlers = server.setRequestHandler.mock.calls.flatMap((x: unknown[]) => x).filter((x: unknown) => typeof x === 'function')
+      const callToolHandler = handlers[1]
+
+      // A client that serialized `parent` twice: JSON.stringify(JSON.stringify(parent)).
+      const doubleEncodedParent = JSON.stringify(JSON.stringify({ page_id: '3870bb29-1a64-816b-8641-c87ca28062d0' }))
+
+      await callToolHandler({
+        params: {
+          name: 'API-create-a-comment',
+          arguments: {
+            parent: doubleEncodedParent,
+            rich_text: [{ text: { content: 'Hello' } }],
+          },
+        },
+      })
+
+      expect(HttpClient.prototype.executeOperation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          parent: { page_id: '3870bb29-1a64-816b-8641-c87ca28062d0' },
+        }),
+      )
+    })
+
+    it('should not coerce scalar or quoted-scalar string params', async () => {
+      const mockResponse = {
+        data: { success: true },
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+      }
+      ;(HttpClient.prototype.executeOperation as ReturnType<typeof vi.fn>).mockResolvedValue(mockResponse)
+
+      ;(proxy as any).openApiLookup = {
+        'API-search': {
+          operationId: 'search',
+          responses: { '200': { description: 'Success' } },
+          method: 'post',
+          path: '/search',
+        },
+      }
+
+      const server = (proxy as any).server
+      const handlers = server.setRequestHandler.mock.calls.flatMap((x: unknown[]) => x).filter((x: unknown) => typeof x === 'function')
+      const callToolHandler = handlers[1]
+
+      await callToolHandler({
+        params: {
+          name: 'API-search',
+          arguments: {
+            // Looks like JSON scalars, but the schema wants strings: keep as-is
+            // rather than coercing to number/boolean or unwrapping the quotes.
+            count: '123',
+            flag: 'true',
+            quoted: '"hello"',
+          },
+        },
+      })
+
+      expect(HttpClient.prototype.executeOperation).toHaveBeenCalledWith(
+        expect.anything(),
+        { count: '123', flag: 'true', quoted: '"hello"' },
       )
     })
   })

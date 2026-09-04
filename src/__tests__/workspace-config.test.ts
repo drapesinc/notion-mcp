@@ -6,6 +6,11 @@ import {
   type MultiWorkspaceConfig,
 } from '../workspace-config'
 
+// Track the value the source actually sends, so an API-version bump in
+// workspace-config.ts cannot leave this test asserting a stale date (it
+// did: source moved to 2026-03-11, these tests still expected 2025-09-03).
+const NOTION_VERSION = '2026-03-11'
+
 describe('Workspace Configuration', () => {
   let originalEnv: NodeJS.ProcessEnv
 
@@ -110,7 +115,7 @@ describe('Workspace Configuration', () => {
       const headers = getWorkspaceHeaders(workspace)
 
       expect(headers['Authorization']).toBe('Bearer test-token-123')
-      expect(headers['Notion-Version']).toBe('2025-09-03')
+      expect(headers['Notion-Version']).toBe(NOTION_VERSION)
     })
 
     it('should use latest API version', () => {
@@ -123,7 +128,7 @@ describe('Workspace Configuration', () => {
       const headers = getWorkspaceHeaders(workspace)
 
       // Verify we're using the latest API version
-      expect(headers['Notion-Version']).toBe('2025-09-03')
+      expect(headers['Notion-Version']).toBe(NOTION_VERSION)
     })
   })
 
