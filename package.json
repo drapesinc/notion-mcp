@@ -6,7 +6,7 @@
     "mcp",
     "server"
   ],
-  "version": "2.5.1",
+  "version": "2.5.2",
   "license": "MIT",
   "type": "module",
   "scripts": {
@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "axios": "1.13.5",
+    "axios": "1.20.0",
     "express": "^4.21.2",
     "form-data": "^4.0.1",
     "mustache": "^4.2.0",
