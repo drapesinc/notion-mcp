@@ -2,14 +2,33 @@
 
 > [!NOTE]
 >
-> We’ve introduced **Notion MCP**, a remote MCP server with the following improvements:
+> For the best experience, use **[Remote Notion MCP](https://developers.notion.com/docs/mcp)**,
+> our official hosted MCP server. **This repository is a separate, self-hosted MCP
+> server implementation that is no longer actively maintained or supported. Please
+> use Remote Notion MCP instead.** It is purpose-built to give AI agents
+> **faster results using far fewer tokens**.
 >
-> - Easy installation via standard OAuth. No need to fiddle with JSON or API tokens anymore.
-> - Powerful tools tailored to AI agents, including editing pages in Markdown. These tools are designed with optimized token consumption in mind.
+> Remote Notion MCP can search your workspace and connected apps semantically, read and
+> edit pages in Markdown, and return only the most relevant context. That means less
+> time waiting, less context-window usage, and lower token costs. It also uses OAuth
+> and automatically respects each user's existing Notion permissions—without API
+> tokens, JSON configuration, manual page sharing, or a local server to maintain.
 >
-> Learn more and get started at [Notion MCP documentation](https://developers.notion.com/docs/mcp).
+> | Feature | Remote Notion MCP | This project (local) |
+> | --- | :---: | :---: |
+> | **Fast, hosted experience** | ✅ | Runs and updates locally |
+> | **Token-efficient responses** | ✅ | Limited |
+> | Powerful tools tailored for AI agents | ✅ | Basic API-derived tools |
+> | Semantic search across your Notion workspace | ✅ | Keyword search only |
+> | AI Connector search across connected apps | ✅ | Not available |
+> | Markdown-native page reading and editing | ✅ | Limited to two page-content tools |
+> | Seamless OAuth setup | ✅ | Manual token and JSON configuration |
+> | Respects each user's existing Notion permissions | ✅ | Manual integration permissions and page sharing |
+> | Active support and ongoing improvements | ✅ | Not actively supported |
 >
-> We are prioritizing, and only providing active support for, **Notion MCP** (remote). As a result:
+> Learn more and get started in the [Remote Notion MCP documentation](https://developers.notion.com/docs/mcp).
+>
+> We are prioritizing, and only providing active support for, **Remote Notion MCP**. As a result:
 >
 > - We may sunset this local MCP server repository in the future.
 > - Issues and pull requests here are not actively monitored.
