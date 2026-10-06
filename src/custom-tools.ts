@@ -1,5 +1,6 @@
 import { Tool } from '@modelcontextprotocol/sdk/types.js'
 import { getAllDataSourceIds, getDatabaseId, getDataSourceId } from './workspace-config.js'
+import { filesToList } from './property-values.js'
 
 export interface CustomToolHandler {
   (params: Record<string, any>, httpClient: any): Promise<any>
@@ -652,6 +653,9 @@ export const customTools: CustomTool[] = [
             break
           case 'people':
             properties[name] = p.people?.map((person: any) => person.name || person.id) || []
+            break
+          case 'files':
+            properties[name] = filesToList(p.files)
             break
           default:
             // For complex types, include a simplified version
