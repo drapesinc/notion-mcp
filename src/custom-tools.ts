@@ -2,7 +2,7 @@ import { Tool } from '@modelcontextprotocol/sdk/types.js'
 import { getAllDataSourceIds, getDatabaseId, getDataSourceId } from './workspace-config.js'
 
 export interface CustomToolHandler {
-  (params: Record<string, any>, httpClient: any): Promise<any>
+  (params: Record<string, any>, httpClient: any, ctx?: { workspace?: string }): Promise<any>
 }
 
 export interface CustomTool {
