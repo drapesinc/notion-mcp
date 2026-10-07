@@ -2157,24 +2157,36 @@ export const unifiedTools: CustomTool[] = [
               // Fix: run separate queries per date property and merge/dedup results
               const needsMultiQuery = dateProperties.length > 1 && !!overdueFloorDate
 
-              const runQuery = async (filter: any, targetDsId: string) => {
-                try {
-                  return await httpClient.rawRequest('post', `/v1/data_sources/${targetDsId}/query`, {
+              const MAX_PAGES = 20
+              const queryPages = async (filter: any, targetDsId: string) => {
+                const results: any[] = []
+                let cursor: string | undefined
+                for (let page = 0; page < MAX_PAGES; page++) {
+                  const resp = await httpClient.rawRequest('post', `/v1/data_sources/${targetDsId}/query`, {
                     filter,
                     sorts: [{ property: dateProperties[0], direction: 'ascending' }],
-                    page_size: 50
+                    page_size: 100,
+                    ...(cursor ? { start_cursor: cursor } : {})
                   })
+                  results.push(...(resp.data?.results || []))
+                  if (!resp.data?.has_more || !resp.data?.next_cursor) return results
+                  cursor = resp.data.next_cursor
+                }
+                errors.push(`${ws}: truncated at ${MAX_PAGES} pages`)
+                return results
+              }
+
+              // Returns all result rows (following next_cursor), or null if the query failed
+              const runQuery = async (filter: any, targetDsId: string): Promise<any[] | null> => {
+                try {
+                  return await queryPages(filter, targetDsId)
                 } catch (queryErr: any) {
                   const msg = queryErr?.data?.message || queryErr?.response?.data?.message || queryErr?.message || 'unknown query error'
                   errors.push(`${ws}: ${msg}`)
                   debug.push(`${ws} query failed: ${msg}`)
                   const legacyDbId = getDatabaseId('tasks', ws)
                   if (!legacyDbId) return null
-                  return await httpClient.rawRequest('post', `/v1/data_sources/${legacyDbId}/query`, {
-                    filter,
-                    sorts: [{ property: dateProperties[0], direction: 'ascending' }],
-                    page_size: 50
-                  })
+                  return await queryPages(filter, legacyDbId)
                 }
               }
 
@@ -2186,9 +2198,9 @@ export const unifiedTools: CustomTool[] = [
                   const filter = statusFilter
                     ? { and: [buildDateRange(dateProp), statusFilter] }
                     : buildDateRange(dateProp)
-                  const resp = await runQuery(filter, dsId)
-                  if (!resp) continue
-                  for (const t of (resp.data.results || [])) {
+                  const rows = await runQuery(filter, dsId)
+                  if (!rows) continue
+                  for (const t of rows) {
                     if (!seenIds.has(t.id)) {
                       seenIds.add(t.id)
                       tasks.push(t)
@@ -2200,9 +2212,9 @@ export const unifiedTools: CustomTool[] = [
                 const dateFilter = dateFilters.length === 1
                   ? dateFilters[0]
                   : { or: dateFilters }
-                const resp = await runQuery(statusFilter ? { and: [dateFilter, statusFilter] } : dateFilter, dsId)
-                if (!resp) continue
-                tasks = resp.data.results || []
+                const rows = await runQuery(statusFilter ? { and: [dateFilter, statusFilter] } : dateFilter, dsId)
+                if (!rows) continue
+                tasks = rows
               }
 
               workspaceName = ws

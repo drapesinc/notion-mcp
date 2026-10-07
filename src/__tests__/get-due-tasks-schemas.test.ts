@@ -158,4 +158,43 @@ describe('notion-database get-due-tasks per workspace schema', () => {
     expect(res.workspace).toBe('drapes')
     expect(http.rawRequest.mock.calls[0][1]).toBe(`/v1/data_sources/${KNOWN_TASKS_SCHEMAS.drapes.dataSourceId}`)
   })
+
+  it('follows next_cursor across pages until has_more is false', async () => {
+    const c = CASES[1]
+    const mk = (id: string) => ({
+      id, url: `https://notion.so/${id}`,
+      properties: {
+        [c.title]: { type: 'title', title: [{ plain_text: id }] },
+        [c.due]: { type: 'date', date: { start: '2026-10-01' } },
+        [c.status]: { type: 'status', status: { name: 'In Progress' } },
+      },
+    })
+    http.rawRequest
+      .mockResolvedValueOnce({ data: { properties: schemaFor(c) } })
+      .mockResolvedValueOnce({ data: { results: [mk('a'), mk('b')], has_more: true, next_cursor: 'c1' } })
+      .mockResolvedValueOnce({ data: { results: [mk('c')], has_more: true, next_cursor: 'c2' } })
+      .mockResolvedValueOnce({ data: { results: [mk('d')], has_more: false, next_cursor: null } })
+    const res = await tool().handler(
+      { action: 'get-due-tasks', include_details: false, overdue_floor_days: 0 },
+      http, { workspace: 'drapes' }
+    )
+    expect(res.total_tasks).toBe(4)
+    expect(http.rawRequest.mock.calls[2][2].start_cursor).toBe('c1')
+    expect(http.rawRequest.mock.calls[3][2].start_cursor).toBe('c2')
+  })
+
+  it('caps pagination at 20 pages and reports truncation', async () => {
+    const c = CASES[0]
+    http.rawRequest.mockImplementation(async (_m: string, path: string) =>
+      path.endsWith('/query')
+        ? { data: { results: [], has_more: true, next_cursor: 'x' } }
+        : { data: { properties: schemaFor(c) } })
+    const res = await tool().handler(
+      { action: 'get-due-tasks', include_details: false, overdue_floor_days: 0 },
+      http, { workspace: 'personal' }
+    )
+    const queries = http.rawRequest.mock.calls.filter((x: any[]) => x[1].endsWith('/query'))
+    expect(queries.length).toBe(20)
+    expect(res.errors?.[0]).toMatch(/truncated at 20 pages/)
+  })
 })
