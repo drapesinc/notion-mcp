@@ -48,7 +48,7 @@ type NewToolDefinition = {
 
 // Custom tool interface
 export interface CustomToolHandler {
-  (params: Record<string, any>, httpClient: HttpClient): Promise<any>
+  (params: Record<string, any>, httpClient: HttpClient, ctx?: { workspace?: string }): Promise<any>
 }
 
 export interface CustomTool {
@@ -385,7 +385,8 @@ export class MCPProxy {
         }
 
         try {
-          const result = await customTool.handler(params || {}, httpClient)
+          const resolvedWorkspace = getWorkspace(this.workspaceConfig, workspace)?.name
+          const result = await customTool.handler(params || {}, httpClient, { workspace: resolvedWorkspace })
           return {
             content: [
               {

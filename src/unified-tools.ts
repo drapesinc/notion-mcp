@@ -12,6 +12,7 @@
 
 import { Tool } from '@modelcontextprotocol/sdk/types.js'
 import { getAllDataSourceIds, getDatabaseId, getDataSourceId } from './workspace-config.js'
+import { KNOWN_TASKS_SCHEMAS, resolveTasksSchema, workspaceForDataSource } from './tasks-schema.js'
 
 // ============================================================================
 // Icon Parsing Utility
@@ -84,7 +85,7 @@ async function parseIcon(iconInput: string): Promise<{ icon: any; validated: boo
 }
 
 export interface CustomToolHandler {
-  (params: Record<string, any>, httpClient: any): Promise<any>
+  (params: Record<string, any>, httpClient: any, ctx?: { workspace?: string }): Promise<any>
 }
 
 export interface CustomTool {
@@ -1923,7 +1924,7 @@ export const unifiedTools: CustomTool[] = [
             enum: ['get', 'query', 'update', 'get-due-tasks'],
             description: 'The operation to perform'
           },
-          data_source_id: { type: 'string', description: 'Data source ID (what Notion UI calls "database") - for get, query, update' },
+          data_source_id: { type: 'string', description: 'Data source ID (what Notion UI calls "database") - for get, query, update; for get-due-tasks an optional override (default: the workspace Tasks data source)' },
           title: { type: 'string', description: 'New database title (for update action)' },
           properties: { type: 'object', description: 'Property configurations to add/update (for update action). Format: { "PropertyName": { "type_config": {...} } }', additionalProperties: true },
           filter: { type: 'object', description: 'Notion filter object', additionalProperties: true },
@@ -1937,7 +1938,7 @@ export const unifiedTools: CustomTool[] = [
         required: ['action']
       }
     },
-    handler: async (params, httpClient) => {
+    handler: async (params, httpClient, ctx) => {
       const { action, data_source_id, title, properties, filter, sorts, page_size = 100, start_cursor, days_ahead = 0, include_details = true, overdue_floor_days = 60 } = params
 
       switch (action) {
@@ -2047,8 +2048,25 @@ export const unifiedTools: CustomTool[] = [
         }
 
         case 'get-due-tasks': {
-          // Get Tasks data_source IDs from env vars
-          const TASKS_DATASOURCES = getAllDataSourceIds('tasks')
+          // Which workspace is this call for? The proxy passes it in ctx (it strips
+          // `workspace` from params); tests/direct callers may still put it in params.
+          const requestedWs: string | undefined = (ctx?.workspace || params.workspace || undefined)?.toLowerCase()
+
+          // Candidate data sources, most specific first:
+          //   1. explicit data_source_id param
+          //   2. NOTION_DS_TASKS_<WS> env var for the requested workspace
+          //   3. built-in known id for the requested workspace (the env vars are
+          //      usually NOT set; this is why get-due-tasks used to return 0)
+          //   4. no workspace known: every NOTION_DS_TASKS_* env var
+          const TASKS_DATASOURCES: Record<string, string> = {}
+          if (data_source_id) {
+            TASKS_DATASOURCES[workspaceForDataSource(data_source_id) || requestedWs || 'custom'] = data_source_id
+          } else if (requestedWs) {
+            const id = getDataSourceId('tasks', requestedWs) || KNOWN_TASKS_SCHEMAS[requestedWs]?.dataSourceId
+            if (id) TASKS_DATASOURCES[requestedWs] = id
+          } else {
+            Object.assign(TASKS_DATASOURCES, getAllDataSourceIds('tasks'))
+          }
 
           const today = new Date()
           today.setDate(today.getDate() + days_ahead)
@@ -2064,63 +2082,54 @@ export const unifiedTools: CustomTool[] = [
           }
 
           const allTasks: any[] = []
-          let workspaceName = 'unknown'
+          let workspaceName = requestedWs || 'unknown'
           const errors: string[] = []
           const debug: string[] = [`datasources: ${JSON.stringify(TASKS_DATASOURCES)}`]
+          if (Object.keys(TASKS_DATASOURCES).length === 0) {
+            errors.push(requestedWs
+              ? `No Tasks data source known for workspace '${requestedWs}'. Pass data_source_id or set NOTION_DS_TASKS_${requestedWs.toUpperCase()}.`
+              : 'No workspace given and no NOTION_DS_TASKS_* env vars set. Pass workspace or data_source_id.')
+          }
 
           for (const [ws, dsId] of Object.entries(TASKS_DATASOURCES)) {
             debug.push(`trying ${ws}: ${dsId}`)
             try {
-              // Auto-discover property names from schema
+              // Resolve title/status/date/assignee property names from the schema
+              // (known per-workspace mapping first, then detection).
               let statusPropertyName = 'Status'
-              let statusOptions: any[] = []
-              let statusOptionsFound = false
-              let assigneePropertyName: string | null = null // "Assignee" (Drapes) or "Owner" (Four All) or null (Personal)
-              const dateProperties: string[] = []
+              let statusType: 'status' | 'select' | null = 'status'
+              let closedStatuses: string[] = ['Done', "Don't Do", 'Archived']
+              let assigneePropertyName: string | null = null
+              let dateProperties: string[] = []
+              let schemaOk = false
               try {
                 const schemaResponse = await httpClient.rawRequest('get', `/v1/data_sources/${dsId}`, {})
-                const properties = schemaResponse.data?.properties || {}
-                for (const [propName, propDef] of Object.entries(properties)) {
-                  const propType = (propDef as any).type
-                  // Find the status property (usually only one)
-                  if (propType === 'status') {
-                    // A DB can have several status-typed props (Personal has Status AND
-                    // Priority). Prefer one literally named "Status"; otherwise take the
-                    // first, never let a later one silently overwrite a better match.
-                    const isBetter = propName.toLowerCase() === 'status' || !statusOptionsFound
-                    if (isBetter) {
-                      statusPropertyName = propName
-                      statusOptions = ((propDef as any).status?.groups
-                        ? (propDef as any).status.options
-                        : (propDef as any).status?.options) || []
-                      statusOptionsFound = true
-                    }
-                  }
-                  // Collect scheduling-related date properties
-                  if (propType === 'date') {
-                    const lowerName = propName.toLowerCase()
-                    if (['due', 'deadline', 'work session'].includes(lowerName)) {
-                      dateProperties.push(propName)
-                    }
-                  }
-                  // Detect assignee/owner people property
-                  if (propType === 'people') {
-                    const lowerName = propName.toLowerCase()
-                    if (['assignee', 'owner'].includes(lowerName)) {
-                      assigneePropertyName = propName
-                    }
-                  }
+                const r = resolveTasksSchema(schemaResponse.data?.properties || {}, ws)
+                schemaOk = true
+                if (r.statusProperty) {
+                  statusPropertyName = r.statusProperty
+                  statusType = r.statusType
+                  closedStatuses = r.closedStatuses
+                } else {
+                  statusType = null
+                  closedStatuses = []
                 }
+                dateProperties = r.dateProperties
+                assigneePropertyName = r.assigneeProperty
               } catch (schemaErr: any) {
-                // Fall back to defaults if schema fetch fails
                 debug.push(`${ws} schema error: ${schemaErr?.data?.message || schemaErr?.message || 'Unknown'}`)
-                dateProperties.push('Due', 'Work Session')
               }
               if (dateProperties.length === 0) {
-                dateProperties.push('Due', 'Work Session')
+                // Schema unavailable (or no date prop found): fall back to the known mapping.
+                const k = KNOWN_TASKS_SCHEMAS[ws]
+                if (k) {
+                  dateProperties.push(k.due)
+                  if (!schemaOk) statusPropertyName = k.status
+                } else {
+                  dateProperties.push('Due')
+                }
               }
-              debug.push(`${ws} props: status=${statusPropertyName}, dates=${dateProperties.join(',')}, assignee=${assigneePropertyName || 'none'}`)
-
+              debug.push(`${ws} props: status=${statusPropertyName}(${statusType}), dates=${dateProperties.join(',')}, assignee=${assigneePropertyName || 'none'}`)
 
               // Build date filter with OR across all scheduling properties
               // Each property gets an upper bound and optionally a lower bound (overdue floor)
@@ -2133,18 +2142,14 @@ export const unifiedTools: CustomTool[] = [
                 }
                 return upperBound
               }
-              // Build status filter
-              // 🚨 Only exclude options that EXIST on this property. Notion 400s on an
-              // unknown option ("Archived" is not a Drapes Work Status), and the catch
-              // below used to swallow that into a silent `total_tasks: 0`.
-              const wanted = ['Done', "Don't Do", 'Archived']
-              const available = new Set(statusOptions.map((o: any) => o?.name).filter(Boolean))
-              const excludes = statusOptionsFound
-                ? wanted.filter(w => available.has(w))
-                : wanted
+              // Build status filter: exclude closed statuses (the schema's "Complete"
+              // group plus Done / Don't Do / Archived). Only names that EXIST on this
+              // property are used; Notion 400s on an unknown option.
+              const excludes = closedStatuses
               debug.push(`${ws} status excludes: ${excludes.join(',') || '(none)'}`)
-              const statusFilter = excludes.length
-                ? { and: excludes.map(v => ({ property: statusPropertyName, status: { does_not_equal: v } })) }
+              const statusKey = statusType === 'select' ? 'select' : 'status'
+              const statusFilter = excludes.length && statusType
+                ? { and: excludes.map(v => ({ property: statusPropertyName, [statusKey]: { does_not_equal: v } })) }
                 : null
 
               // When multiple date properties + overdue floor active, Notion API rejects
@@ -2152,24 +2157,36 @@ export const unifiedTools: CustomTool[] = [
               // Fix: run separate queries per date property and merge/dedup results
               const needsMultiQuery = dateProperties.length > 1 && !!overdueFloorDate
 
-              const runQuery = async (filter: any, targetDsId: string) => {
-                try {
-                  return await httpClient.rawRequest('post', `/v1/data_sources/${targetDsId}/query`, {
+              const MAX_PAGES = 20
+              const queryPages = async (filter: any, targetDsId: string) => {
+                const results: any[] = []
+                let cursor: string | undefined
+                for (let page = 0; page < MAX_PAGES; page++) {
+                  const resp = await httpClient.rawRequest('post', `/v1/data_sources/${targetDsId}/query`, {
                     filter,
                     sorts: [{ property: dateProperties[0], direction: 'ascending' }],
-                    page_size: 50
+                    page_size: 100,
+                    ...(cursor ? { start_cursor: cursor } : {})
                   })
+                  results.push(...(resp.data?.results || []))
+                  if (!resp.data?.has_more || !resp.data?.next_cursor) return results
+                  cursor = resp.data.next_cursor
+                }
+                errors.push(`${ws}: truncated at ${MAX_PAGES} pages`)
+                return results
+              }
+
+              // Returns all result rows (following next_cursor), or null if the query failed
+              const runQuery = async (filter: any, targetDsId: string): Promise<any[] | null> => {
+                try {
+                  return await queryPages(filter, targetDsId)
                 } catch (queryErr: any) {
                   const msg = queryErr?.data?.message || queryErr?.response?.data?.message || queryErr?.message || 'unknown query error'
                   errors.push(`${ws}: ${msg}`)
                   debug.push(`${ws} query failed: ${msg}`)
                   const legacyDbId = getDatabaseId('tasks', ws)
                   if (!legacyDbId) return null
-                  return await httpClient.rawRequest('post', `/v1/data_sources/${legacyDbId}/query`, {
-                    filter,
-                    sorts: [{ property: dateProperties[0], direction: 'ascending' }],
-                    page_size: 50
-                  })
+                  return await queryPages(filter, legacyDbId)
                 }
               }
 
@@ -2181,9 +2198,9 @@ export const unifiedTools: CustomTool[] = [
                   const filter = statusFilter
                     ? { and: [buildDateRange(dateProp), statusFilter] }
                     : buildDateRange(dateProp)
-                  const resp = await runQuery(filter, dsId)
-                  if (!resp) continue
-                  for (const t of (resp.data.results || [])) {
+                  const rows = await runQuery(filter, dsId)
+                  if (!rows) continue
+                  for (const t of rows) {
                     if (!seenIds.has(t.id)) {
                       seenIds.add(t.id)
                       tasks.push(t)
@@ -2195,9 +2212,9 @@ export const unifiedTools: CustomTool[] = [
                 const dateFilter = dateFilters.length === 1
                   ? dateFilters[0]
                   : { or: dateFilters }
-                const resp = await runQuery(statusFilter ? { and: [dateFilter, statusFilter] } : dateFilter, dsId)
-                if (!resp) continue
-                tasks = resp.data.results || []
+                const rows = await runQuery(statusFilter ? { and: [dateFilter, statusFilter] } : dateFilter, dsId)
+                if (!rows) continue
+                tasks = rows
               }
 
               workspaceName = ws
@@ -2273,7 +2290,7 @@ export const unifiedTools: CustomTool[] = [
           }
 
           const todayStr = new Date().toISOString().split('T')[0]
-          const debugInfo = workspaceName === 'unknown' ? `${workspaceName}[${debug.length}d,${errors.length}e]` : workspaceName
+          const debugInfo = workspaceName
           return {
             success: true,
             workspace: debugInfo,
