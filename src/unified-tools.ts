@@ -12,6 +12,7 @@
 
 import { Tool } from '@modelcontextprotocol/sdk/types.js'
 import { getAllDataSourceIds, getDatabaseId, getDataSourceId } from './workspace-config.js'
+import { filesToList } from './property-values.js'
 import { KNOWN_TASKS_SCHEMAS, resolveTasksSchema, workspaceForDataSource } from './tasks-schema.js'
 
 // ============================================================================
@@ -965,6 +966,7 @@ export const unifiedTools: CustomTool[] = [
                 if (p.relation?.length > 0) linkedDatabases.push(name)
                 break
               case 'people': extractedProps[name] = p.people?.map((person: any) => person.name || person.id) || []; break
+              case 'files': extractedProps[name] = filesToList(p.files); break
               default: extractedProps[name] = `[${p.type}]`
             }
           }
@@ -1993,6 +1995,7 @@ export const unifiedTools: CustomTool[] = [
                 case 'checkbox': props[name] = p.checkbox; break
                 case 'number': props[name] = p.number; break
                 case 'relation': props[name] = p.relation?.length || 0; break
+                case 'files': props[name] = filesToList(p.files); break
                 default: props[name] = `[${p.type}]`
               }
             }
