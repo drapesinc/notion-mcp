@@ -9,6 +9,7 @@ import os from 'node:os'
 import express from 'express'
 
 import { initProxy, ValidationError } from '../src/init-server'
+import { OAuthResource, oauthConfigFromEnv } from './oauth-resource'
 import {
   NOTION_TOKEN_HEADER,
   notionHeadersForToken,
@@ -42,10 +43,19 @@ export async function startServer(args: string[] = process.argv) {
     const app = express()
     app.use(express.json())
 
+    // OAuth resource-server mode (OAUTH_ISSUER set): an external authorization
+    // server signs users in and this server checks its access tokens instead
+    // of a single shared bearer token.
+    const oauthConfig = oauthConfigFromEnv()
+    const oauth = oauthConfig ? new OAuthResource(oauthConfig) : undefined
+    if (oauth) {
+      oauth.mountMetadata(app)
+    }
+
     // Generate or use provided auth token (from CLI arg or env var) only if auth is enabled
     let authToken: string | undefined
     let authTokenFilePath: string | undefined
-    if (!options.unsafeDisableAuth) {
+    if (!options.unsafeDisableAuth && !oauth) {
       authToken = options.authToken || process.env.AUTH_TOKEN || randomBytes(32).toString('hex')
       if (!options.authToken && !process.env.AUTH_TOKEN) {
         // Write auto-generated token to a file with restricted permissions instead of logging it
@@ -98,7 +108,9 @@ export async function startServer(args: string[] = process.argv) {
     })
 
     // Apply authentication to all /mcp routes only if auth is enabled
-    if (!options.unsafeDisableAuth) {
+    if (oauth) {
+      app.use('/mcp', oauth.middleware())
+    } else if (!options.unsafeDisableAuth) {
       app.use('/mcp', authenticateToken)
     } else {
       for (const warning of getUnsafeAuthWarnings(options)) {
@@ -242,7 +254,10 @@ export async function startServer(args: string[] = process.argv) {
       console.log(`MCP Server listening on ${options.host}:${port}`)
       console.log(`Endpoint: ${serverUrl}/mcp`)
       console.log(`Health check: ${serverUrl}/health`)
-      if (options.unsafeDisableAuth) {
+      if (oauth) {
+        console.log(`Authentication: OAuth access tokens from ${oauth.config.issuer}`)
+        console.log(`Protected resource metadata: ${oauth.resourceMetadataUrl}`)
+      } else if (options.unsafeDisableAuth) {
         console.log(`Authentication: Disabled (unsafe)`)
         console.log(`DNS rebinding protection: Enabled`)
       } else {

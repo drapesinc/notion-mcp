@@ -86,6 +86,11 @@ Environment Variables:
   OPENAPI_MCP_HEADERS      JSON string with Notion API headers (alternative)
   AUTH_TOKEN               Bearer token for HTTP transport authentication (alternative to --auth-token)
   ENABLE_TOKEN_PASSTHROUGH Set to 'true' to enable per-request Notion tokens (alternative to --enable-token-passthrough)
+  OAUTH_ISSUER             OAuth/OIDC issuer URL. When set, HTTP clients sign in through this issuer
+                           and send its JWT access tokens instead of AUTH_TOKEN (e.g. claude.ai connectors)
+  OAUTH_AUDIENCE           Expected 'aud' claim in access tokens (the OAuth client ID)
+  PUBLIC_URL               Public base URL of this server, e.g. https://notion.example.com
+  OAUTH_SCOPES             Scopes advertised to clients (default: openid profile email offline_access)
 
 Examples:
   notion-mcp-server                                      # Use stdio transport (default)

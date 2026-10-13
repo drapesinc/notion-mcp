@@ -392,6 +392,23 @@ AUTH_TOKEN="your-secret-token" npx @notionhq/notion-mcp-server --transport http
 
 The command line argument `--auth-token` takes precedence over the `AUTH_TOKEN` environment variable if both are provided.
 
+###### Option 4: OAuth sign-in (for claude.ai custom connectors)
+
+claude.ai connectors can't send a fixed bearer token; they sign the user in with OAuth. Point the server at an OAuth/OIDC authorization server (Authentik, Keycloak, ...) and it acts as an OAuth resource server:
+
+```bash
+OAUTH_ISSUER="https://auth.example.com/application/o/notion-mcp/" \
+OAUTH_AUDIENCE="<client id of the OAuth app>" \
+PUBLIC_URL="https://notion.example.com" \
+NOTION_TOKEN_WORK="ntn_..." \
+npx @notionhq/notion-mcp-server --transport http --host 0.0.0.0
+```
+
+- Requests without a token get `401` with a `WWW-Authenticate` header pointing at `/.well-known/oauth-protected-resource`, which names the issuer. The issuer's metadata is also mirrored at `/.well-known/oauth-authorization-server`.
+- Access tokens must be JWTs signed with an RSA or EC key published at the issuer's `jwks_uri`. The server checks signature, `iss`, `aud` and expiry. In Authentik, pick a signing key on the provider, or tokens are HS256 and get rejected.
+- Who may sign in is decided by the authorization server (for example a group policy on the Authentik application).
+- `AUTH_TOKEN` is ignored in this mode. Notion workspaces still come from `NOTION_TOKEN_*`.
+
 ###### Unsafe option: disable HTTP authentication
 
 You can disable bearer token authentication only with the explicit unsafe flag:
