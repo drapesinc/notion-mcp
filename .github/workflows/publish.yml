@@ -10,7 +10,9 @@ permissions: {}
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    # Self-hosted on hz-dr since GitHub Actions minutes ran out (2026-10-13).
+    # Back to GitHub's machines: runs-on: ubuntu-latest
+    runs-on: [self-hosted, hz-dr]
 
     permissions:
       id-token: write # Required for OIDC trusted publishing / npm provenance
