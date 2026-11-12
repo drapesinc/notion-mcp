@@ -1,8 +1,6 @@
 import type { OpenAPIV3, OpenAPIV3_1 } from 'openapi-types'
 import OpenAPIClientAxios from 'openapi-client-axios'
 import axios, { type AxiosInstance } from 'axios'
-import FormData from 'form-data'
-import fs from 'fs'
 import { Headers } from './polyfill-headers'
 import { isFileUploadParameter } from '../openapi/file-upload'
 
@@ -142,55 +140,6 @@ export class HttpClient {
     return headers
   }
 
-  private async prepareFileUpload(operation: OpenAPIV3.OperationObject, params: Record<string, any>): Promise<FormData | null> {
-    const fileParams = isFileUploadParameter(operation)
-    if (fileParams.length === 0) return null
-
-    const formData = new FormData()
-
-    // Handle file uploads
-    for (const param of fileParams) {
-      const filePath = params[param]
-      if (!filePath) {
-        throw new Error(`File path must be provided for parameter: ${param}`)
-      }
-      switch (typeof filePath) {
-        case 'string':
-          addFile(param, filePath)
-          break
-        case 'object':
-          if(Array.isArray(filePath)) {
-            let fileCount = 0
-            for(const file of filePath) {
-              addFile(param, file)
-              fileCount++
-            }
-            break
-          }
-          //deliberate fallthrough
-        default:
-          throw new Error(`Unsupported file type: ${typeof filePath}`)
-      }
-      function addFile(name: string, filePath: string) {
-          try {
-            const fileStream = fs.createReadStream(filePath)
-            formData.append(name, fileStream)
-        } catch (error) {
-          throw new Error(`Failed to read file at ${filePath}: ${error}`)
-        }
-      }
-    }
-
-    // Add non-file parameters to form data
-    for (const [key, value] of Object.entries(params)) {
-      if (!fileParams.includes(key)) {
-        formData.append(key, value)
-      }
-    }
-
-    return formData
-  }
-
   /**
    * Execute an OpenAPI operation
    * If the operation object is minimal (just method, path, operationId), it will look up the full definition from the spec
@@ -219,12 +168,15 @@ export class HttpClient {
       }
     }
 
-    // Handle file uploads if present
-    const formData = await this.prepareFileUpload(fullOperation, params)
+    // Adding an upload endpoint to the spec must not grant tools local filesystem access.
+    // Uploads require an explicit file-access policy before they can be supported.
+    if (isFileUploadParameter(fullOperation).length > 0) {
+      throw new Error('File uploads are not supported: local file access is disabled')
+    }
 
     // Separate parameters based on their location
     const urlParameters: Record<string, any> = {}
-    const bodyParams: Record<string, any> = formData || { ...params }
+    const bodyParams: Record<string, any> = { ...params }
 
     // Extract path and query parameters based on operation definition
     if (fullOperation.parameters) {
@@ -233,9 +185,7 @@ export class HttpClient {
           if (param.in === 'path' || param.in === 'query') {
             if (params[param.name] !== undefined) {
               urlParameters[param.name] = params[param.name]
-              if (!formData) {
-                delete bodyParams[param.name]
-              }
+              delete bodyParams[param.name]
             }
           }
         }
@@ -243,7 +193,7 @@ export class HttpClient {
     }
 
     // Add all parameters as url parameters if there is no requestBody defined
-    if (!fullOperation.requestBody && !formData) {
+    if (!fullOperation.requestBody) {
       for (const key in bodyParams) {
         if (bodyParams[key] !== undefined) {
           urlParameters[key] = bodyParams[key]
@@ -258,11 +208,8 @@ export class HttpClient {
     }
 
     try {
-      // If we have form data, we need to set the correct headers
       const hasBody = Object.keys(bodyParams).length > 0
-      const headers = formData
-        ? formData.getHeaders()
-        : { ...(hasBody ? { 'Content-Type': 'application/json' } : { 'Content-Type': null }) }
+      const headers = { ...(hasBody ? { 'Content-Type': 'application/json' } : { 'Content-Type': null }) }
       const requestConfig = {
         headers: {
           ...this.buildDefaultHeaders(operation),
