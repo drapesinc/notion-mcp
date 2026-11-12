@@ -1272,9 +1272,12 @@ export const unifiedTools: CustomTool[] = [
         case 'delete': {
           if (!page_id) return { success: false, error: 'page_id required for delete' }
 
+          // Notion-Version 2026-03-11 renamed `archived` to `in_trash` and rejects the old
+          // field (400 "body.archived should be not present"). The API has no hard delete,
+          // so both modes move the page to the trash.
           await httpClient.executeOperation(
             { method: 'patch', path: '/v1/pages/{page_id}', operationId: 'patch-page' },
-            { page_id, archived: archive }
+            { page_id, in_trash: true }
           )
 
           return { success: true, action: archive ? 'archived' : 'deleted', page_id }
