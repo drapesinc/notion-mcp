@@ -318,6 +318,8 @@ describe('Unified Tools - notion-page', () => {
 
       expect(result.success).toBe(true)
       expect(result.action).toBe('archived')
+      const [, params] = mockHttpClient.executeOperation.mock.calls.at(-1)!
+      expect(params).toEqual({ page_id: 'page-123', in_trash: true })
     })
   })
 })
