@@ -41,7 +41,7 @@
     "@types/which": "^3.0.4",
     "@vitest/coverage-v8": "^4.1.12",
     "esbuild": "^0.25.12",
-    "multer": "2.4.0",
+    "multer": "2.5.0",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12"
