@@ -74,12 +74,13 @@ export const TOOLSET_DEFINITIONS: Record<ToolsetName, {
     ]
   },
   unified: {
-    description: '6 unified CRUD tools - consolidated action-based tools for pages, blocks, databases, search, comments, users',
+    description: '7 unified CRUD tools - consolidated action-based tools for pages, blocks, databases, views, search, comments, users',
     apiOperations: [],
     customTools: [
       'notion-page',
       'notion-blocks',
       'notion-database',
+      'notion-view',
       'notion-search',
       'notion-comments',
       'notion-users',
