@@ -92,13 +92,14 @@ NOTION_ASSIGNEE_FILTER_WORKSPACES=drapes,fourall
 
 ## Unified CRUD Tools
 
-6 action-based tools that consolidate all Notion operations:
+7 action-based tools that consolidate all Notion operations:
 
 | Tool | Actions | Description |
 |------|---------|-------------|
 | `notion-page` | get, create, update, delete, read-markdown, create-markdown, update-markdown | Page CRUD with template support, relation modes, and Markdown Content API |
 | `notion-blocks` | get, get-block, append, update, delete, replace-section, add-activity-log, complete-todo, add-table-row, update-table-row, add-table-column | Block operations with structured content syntax, table CRUD, and appending to any container block |
-| `notion-database` | get, query, update, get-due-tasks | Data source schema, querying, and schema updates (uses `data_source_id`) |
+| `notion-database` | get, query, update, create, get-due-tasks | Data source schema (with select/status option colours), querying, schema updates, and creating a database under a page (uses `data_source_id`) |
+| `notion-view` | list, get, create, update, delete | Database views: table, board, list, gallery, calendar, timeline, chart, map, dashboard |
 | `notion-search` | (query) | Search pages and data sources |
 | `notion-comments` | get, create | Comments on pages |
 | `notion-users` | list, get, me | User information |
@@ -123,6 +124,9 @@ NOTION_ASSIGNEE_FILTER_WORKSPACES=drapes,fourall
 
 // Add properties to data source
 { "action": "update", "data_source_id": "xyz789", "properties": { "Priority": { "select": { "options": [{"name": "High"}, {"name": "Medium"}, {"name": "Low"}] } }, "Blocked": { "checkbox": {} } } }
+
+// Create a database under a page (a "Name" title property is added when none is given)
+{ "action": "create", "parent_page_id": "page-id", "title": "Apps and Tools", "properties": { "Kind": { "select": { "options": [{"name": "App", "color": "blue"}] } } } }
 
 // Append to any container block (toggle, callout, bullet, etc.)
 { "action": "append", "block_id": "toggle-block-id", "content": "- Nested item 1\n- Nested item 2" }
@@ -608,6 +612,17 @@ Dynamic resources:
 - `notion://workflow/database/{workspace}` - Data source ID for a workspace
 
 ## Changelog
+
+### 2026-11-12: create database, option colours, notion-view exposed
+
+- **`notion-database` `create`**: makes a database under a page (`POST /v1/databases` with
+  `initial_data_source.properties`). Inline by default. Adds a `Name` title property when the
+  schema has none. Returns `database_id` and `data_source_id`.
+- **`notion-database` `get` and `update`** return the options (name and colour) of select,
+  multi_select and status properties, so a schema change can be read back.
+- **`notion-view`** is in the `unified` toolset. The tool existed since 2026-08-10 but the
+  toolset filter left it out, so no client saw it.
+- **Takes effect on next `/mcp` → notion reconnect / session restart.**
 
 ### 2026-08-10: Notion-Version → 2026-03-11 + chart views
 

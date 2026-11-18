@@ -879,6 +879,23 @@ async function resolvePropertiesWithFuzzyMatch(
 // Unified Tools
 // ============================================================================
 
+/**
+ * Short view of a data source schema: type and id for every property, plus the
+ * options (name and colour) of select, multi_select and status properties.
+ */
+export function summarizeSchema(properties: Record<string, any> | undefined): Record<string, any> {
+  return Object.fromEntries(
+    Object.entries(properties || {}).map(([name, prop]: [string, any]) => {
+      const out: any = { type: prop.type, id: prop.id }
+      const options = prop[prop.type]?.options
+      if (Array.isArray(options) && ['select', 'multi_select', 'status'].includes(prop.type)) {
+        out.options = options.map((o: any) => ({ name: o.name, color: o.color }))
+      }
+      return [name, out]
+    })
+  )
+}
+
 export const unifiedTools: CustomTool[] = [
   // ============================================================================
   // 1. notion-page - Page Operations
@@ -1920,18 +1937,21 @@ export const unifiedTools: CustomTool[] = [
   {
     definition: {
       name: 'notion-database',
-      description: 'Unified data source operations: get schema, query with filters/sorts, update schema (title/properties), or get due tasks. Note: In Notion API 2025-09-03+, "data source" is what the Notion UI calls a "database".',
+      description: 'Unified data source operations: get schema (with select/status options and their colours), query with filters/sorts, update schema (title/properties), create a new database under a page, or get due tasks. Note: In Notion API 2025-09-03+, "data source" is what the Notion UI calls a "database".',
       inputSchema: {
         type: 'object',
         properties: {
           action: {
             type: 'string',
-            enum: ['get', 'query', 'update', 'get-due-tasks'],
-            description: 'The operation to perform'
+            enum: ['get', 'query', 'update', 'create', 'get-due-tasks'],
+            description: 'The operation to perform. create makes a new database (table) under a page.'
           },
           data_source_id: { type: 'string', description: 'Data source ID (what Notion UI calls "database") - for get, query, update; for get-due-tasks an optional override (default: the workspace Tasks data source)' },
-          title: { type: 'string', description: 'New database title (for update action)' },
-          properties: { type: 'object', description: 'Property configurations to add/update (for update action). Format: { "PropertyName": { "type_config": {...} } }', additionalProperties: true },
+          parent_page_id: { type: 'string', description: 'Page that will hold the new database (required for create)' },
+          is_inline: { type: 'boolean', description: 'For create: true shows the database inline in the parent page, false makes a full-page database. Default: true', default: true },
+          icon: { type: 'string', description: 'For create: emoji icon for the database (e.g. 🧰)' },
+          title: { type: 'string', description: 'Database title (required for create; new title for update)' },
+          properties: { type: 'object', description: 'Property configurations. update: properties to add/change. create: the full schema; a title property is added as "Name" when none is given. Format: { "PropertyName": { "type_config": {...} } }. Select options take a colour: { "select": { "options": [{ "name": "Live", "color": "green" }] } }. Colours: default, gray, brown, orange, yellow, green, blue, purple, pink, red.', additionalProperties: true },
           filter: { type: 'object', description: 'Notion filter object', additionalProperties: true },
           sorts: { type: 'array', description: 'Sort criteria', items: { type: 'object' } },
           page_size: { type: 'number', description: 'Results per page (max 100)', default: 100 },
@@ -1944,9 +1964,62 @@ export const unifiedTools: CustomTool[] = [
       }
     },
     handler: async (params, httpClient, ctx) => {
-      const { action, data_source_id, title, properties, filter, sorts, page_size = 100, start_cursor, days_ahead = 0, include_details = true, overdue_floor_days = 60 } = params
+      const { action, data_source_id, title, properties, filter, sorts, page_size = 100, start_cursor, days_ahead = 0, include_details = true, overdue_floor_days = 60, parent_page_id, is_inline = true, icon } = params
 
       switch (action) {
+        case 'create': {
+          if (!parent_page_id) return { success: false, error: 'parent_page_id required' }
+          if (!title) return { success: false, error: 'title required' }
+
+          // A database needs exactly one title property. Add "Name" when the caller gave none.
+          const schema: Record<string, any> = { ...(properties || {}) }
+          const hasTitle = Object.values(schema).some((p: any) => p && typeof p === 'object' && 'title' in p)
+          if (!hasTitle) schema.Name = { title: {} }
+
+          const createBody: any = {
+            parent: { type: 'page_id', page_id: parent_page_id },
+            title: [{ type: 'text', text: { content: title } }],
+            is_inline,
+            initial_data_source: { properties: schema }
+          }
+          if (icon) createBody.icon = { type: 'emoji', emoji: icon }
+
+          try {
+            const response = await httpClient.rawRequest('post', '/v1/databases', createBody)
+            const db = response.data
+            const dsId = db.data_sources?.[0]?.id
+
+            // The create response lists the data source but not its schema, so read it back.
+            let schemaOut: Record<string, any> | undefined
+            if (dsId) {
+              try {
+                const dsResponse = await httpClient.rawRequest('get', `/v1/data_sources/${dsId}`, {})
+                schemaOut = summarizeSchema(dsResponse.data?.properties)
+              } catch {
+                // The database exists; the caller can read the schema with action "get".
+              }
+            }
+
+            return {
+              success: true,
+              action: 'created',
+              database_id: db.id,
+              data_source_id: dsId,
+              title: richTextToPlain(db.title),
+              url: db.url,
+              is_inline: db.is_inline,
+              properties: schemaOut
+            }
+          } catch (error: any) {
+            return {
+              success: false,
+              error: error?.data?.message || error?.message || 'Create failed',
+              code: error?.data?.code || error?.status,
+              details: error?.data
+            }
+          }
+        }
+
         case 'get': {
           if (!data_source_id) return { success: false, error: 'data_source_id required' }
 
@@ -1958,7 +2031,7 @@ export const unifiedTools: CustomTool[] = [
             id: ds.id,
             title: richTextToPlain(ds.title),
             url: ds.url,
-            properties: Object.fromEntries(Object.entries(ds.properties || {}).map(([name, prop]: [string, any]) => [name, { type: prop.type, id: prop.id }]))
+            properties: summarizeSchema(ds.properties)
           }
         }
 
@@ -2028,9 +2101,7 @@ export const unifiedTools: CustomTool[] = [
             const ds = response.data
 
             // Build summary of updated properties
-            const updatedProps = Object.fromEntries(
-              Object.entries(ds.properties || {}).map(([name, prop]: [string, any]) => [name, { type: prop.type, id: prop.id }])
-            )
+            const updatedProps = summarizeSchema(ds.properties)
 
             return {
               success: true,

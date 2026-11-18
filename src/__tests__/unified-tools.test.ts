@@ -465,6 +465,96 @@ describe('Unified Tools - notion-database', () => {
     })
   })
 
+  describe('schema options', () => {
+    it('get returns select and status options with their colours', async () => {
+      mockHttpClient.rawRequest.mockResolvedValue({
+        data: {
+          id: 'ds-123',
+          title: [{ plain_text: 'Apps' }],
+          properties: {
+            Name: { type: 'title', id: 'title', title: {} },
+            Kind: { type: 'select', id: 'k', select: { options: [{ id: '1', name: 'App', color: 'blue' }] } },
+            Status: { type: 'status', id: 's', status: { options: [{ id: '2', name: 'Live', color: 'green' }], groups: [] } },
+          },
+        },
+      })
+
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-database')!
+      const result = await tool.handler({ action: 'get', data_source_id: 'ds-123' }, mockHttpClient)
+
+      expect(result.properties.Kind).toEqual({ type: 'select', id: 'k', options: [{ name: 'App', color: 'blue' }] })
+      expect(result.properties.Status.options).toEqual([{ name: 'Live', color: 'green' }])
+      expect(result.properties.Name).toEqual({ type: 'title', id: 'title' })
+    })
+
+    it('update returns the option colours that Notion stored', async () => {
+      mockHttpClient.rawRequest.mockResolvedValue({
+        data: {
+          id: 'ds-123',
+          title: [],
+          properties: { Kind: { type: 'select', id: 'k', select: { options: [{ name: 'App', color: 'red' }] } } },
+        },
+      })
+
+      const tool = unifiedTools.find((t) => t.definition.name === 'notion-database')!
+      const result = await tool.handler(
+        { action: 'update', data_source_id: 'ds-123', properties: { Kind: { select: { options: [{ name: 'App', color: 'red' }] } } } },
+        mockHttpClient
+      )
+
+      expect(result.properties.Kind.options).toEqual([{ name: 'App', color: 'red' }])
+    })
+  })
+
+  describe('action: create', () => {
+    const tool = () => unifiedTools.find((t) => t.definition.name === 'notion-database')!
+
+    it('requires parent_page_id and title', async () => {
+      expect((await tool().handler({ action: 'create', title: 'T' }, mockHttpClient)).success).toBe(false)
+      expect((await tool().handler({ action: 'create', parent_page_id: 'p' }, mockHttpClient)).success).toBe(false)
+      expect(mockHttpClient.rawRequest).not.toHaveBeenCalled()
+    })
+
+    it('creates an inline database and adds a title property when none is given', async () => {
+      mockHttpClient.rawRequest
+        .mockResolvedValueOnce({ data: { id: 'db-1', title: [{ plain_text: 'Apps' }], url: 'u', is_inline: true, data_sources: [{ id: 'ds-1' }] } })
+        .mockResolvedValueOnce({ data: { properties: { Name: { type: 'title', id: 'title', title: {} }, Kind: { type: 'select', id: 'k', select: { options: [{ name: 'App', color: 'blue' }] } } } } })
+
+      const result = await tool().handler(
+        { action: 'create', parent_page_id: 'page-1', title: 'Apps', icon: '🧰', properties: { Kind: { select: { options: [{ name: 'App', color: 'blue' }] } } } },
+        mockHttpClient
+      )
+
+      expect(mockHttpClient.rawRequest).toHaveBeenNthCalledWith(1, 'post', '/v1/databases', {
+        parent: { type: 'page_id', page_id: 'page-1' },
+        title: [{ type: 'text', text: { content: 'Apps' } }],
+        is_inline: true,
+        icon: { type: 'emoji', emoji: '🧰' },
+        initial_data_source: {
+          properties: { Kind: { select: { options: [{ name: 'App', color: 'blue' }] } }, Name: { title: {} } },
+        },
+      })
+      expect(result).toMatchObject({ success: true, database_id: 'db-1', data_source_id: 'ds-1' })
+      expect(result.properties.Kind.options).toEqual([{ name: 'App', color: 'blue' }])
+    })
+
+    it('keeps the caller\'s title property', async () => {
+      mockHttpClient.rawRequest.mockResolvedValue({ data: { id: 'db-1', title: [], data_sources: [] } })
+
+      await tool().handler({ action: 'create', parent_page_id: 'p', title: 'T', properties: { App: { title: {} } } }, mockHttpClient)
+
+      expect(mockHttpClient.rawRequest.mock.calls[0][2].initial_data_source.properties).toEqual({ App: { title: {} } })
+    })
+
+    it('returns the Notion error', async () => {
+      mockHttpClient.rawRequest.mockRejectedValue({ status: 400, data: { code: 'validation_error', message: 'bad' } })
+
+      const result = await tool().handler({ action: 'create', parent_page_id: 'p', title: 'T' }, mockHttpClient)
+
+      expect(result).toMatchObject({ success: false, error: 'bad', code: 'validation_error' })
+    })
+  })
+
   describe('action: query', () => {
     it('should query database with filters', async () => {
       const mockResults = {
