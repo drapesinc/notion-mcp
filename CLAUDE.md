@@ -655,16 +655,18 @@ Dynamic resources:
 
 ## Commit, merge and deploy rules
 
-These rules apply to every Claude session and person working in this repo.
+These rules apply to every Claude session and person working in this repo. One step from PR to live: there is no `pending` branch (retired 2026-11-17, Yaw).
 
-- **Branches.** `main` is what's live. `pending` holds finished work waiting to go live. Branch from `pending`, and open your PR against `pending`, not `main`.
+- **Branches.** `main` is what's live. Branch from `main` and open your PR against `main`.
 - **Before you start,** check this repo's open PRs and build on them, so two sessions don't redo the same work.
-- **Merging into `pending`.** A Claude session may merge its own PR into `pending` once CI is green and it has re-read the diff. Merge only work that's ready to go live. Unfinished work stays in its own PR (mark it draft), or ships behind a feature flag that is off by default.
-- **Removing a change.** Revert a rejected change on `pending` with a revert commit. Never force-push `pending` or `main`.
-- **Going live.** One open PR per repo, "Pending changes → main", lists every change waiting to go live. Yaw merges it, about twice a day (after the 08:00 and 16:00 summaries). That merge is the deploy, so nothing else deploys. When `pending` has new green changes, post one line in Infra ops saying the release is ready.
-- **Hotfix.** For a site that's down or a security fix, open the PR straight to `main` with the `hotfix` label. Once it merges, merge `main` back into `pending`.
-- **Risky upgrades** (database major versions, Authentik, anything that can't roll back) get their own PR to `main`, with the backup step written in. They never go in `pending`. Two kinds of change skip `pending` and go straight to `main`: tag-only image bumps from the nightly auto-bump (`auto-bump/*` branches) and Dependabot patches. Both merge themselves once their checks pass.
+- **Merge = deploy.** Merging a PR into `main` is the release: whatever deploys or installs this repo picks up `main`.
+- **Who merges.** A Claude session merges its own PR into `main` once all of these hold: CI is green; a fresh reviewer (for example `/code-review`, given the diff and not the session's conclusions) has reviewed it and every finding is fixed or answered in the PR; the PR is not a draft; and it has no `needs-yaw` label. Then it reads the result back before saying it's live.
+- **`needs-yaw`.** Label the PR `needs-yaw` and leave the merge to Yaw when it is a risky upgrade (database major versions, Authentik, anything that can't roll back; write the backup step into the PR), touches money, client data or anything sent to clients, or changes secrets or sign-in. Sessions never merge a PR with this label.
+- **Automatic merges.** Tag-only image bumps (`auto-bump/*` branches) and Dependabot patches merge themselves once their checks pass.
+- **Unfinished work** stays a draft PR, or ships behind a feature flag that is off by default.
+- **Removing a change.** Revert it with a revert PR. Never force-push `main`.
+- **Hotfix.** Same path, just first in line: a PR to `main`, merged as soon as CI is green.
 - **No edits on servers.** Never edit files on hz-dr, hz-fa or the Mini's checkout. Every change, even one config line, goes through a PR. If an emergency forces a hand edit, open a PR for it within the hour.
 - **Commits.** One commit per finished change, and the message says what changed and why. Never commit secrets, logs or backup copies.
-- **Previews.** Apps run one preview built from `pending` that sleeps when idle. A per-PR preview is built only when the PR has the `preview` label. Infra repos have no preview. Their pending PR lists what each change will restart.
-- **After deploy,** read the result back (service up, page loads, alert cleared) before saying it's live.
+- **Previews.** Apps build a preview only for a PR with the `preview` label. Idle previews sleep.
+- **After deploy,** read the result back (service up, page loads, alert cleared) before saying it's live. What went live each day is listed in the 16:00 summary.
