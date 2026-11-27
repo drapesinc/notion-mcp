@@ -8,9 +8,10 @@ on:
 
 jobs:
   test:
-    # Self-hosted on hz-dr since GitHub Actions minutes ran out (2026-10-13).
-    # Back to GitHub's machines: runs-on: ubuntu-latest
-    runs-on: [self-hosted, hz-dr]
+    # GitHub-hosted on purpose. This repo is public, so a pull request from anyone can start
+    # this job; it must never run on the hz-dr runner (it has the Docker socket). Standard
+    # runners are free for public repos. (2026-11-27 security audit, H9)
+    runs-on: ubuntu-latest
 
     strategy:
       matrix:
